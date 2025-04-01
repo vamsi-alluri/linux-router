@@ -1,0 +1,3 @@
+.vscode/settings.json
+src/.router-with-privilages.c
+src/.router-doesnt-spawn-new-processes.c
