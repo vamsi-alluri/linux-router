@@ -44,10 +44,34 @@
 /* DHCP Magic Cookie */
 #define DHCP_MAGIC_COOKIE 0x63825363
 #define MAX_LEASES 10
-dhcp_lease leases[MAX_LEASES];
+#define MAX_LEASES_PER_SUBNET 10
+
+/* Define multiple subnets */
+typedef struct {
+    uint32_t network;     // Network address in host byte order
+    uint32_t netmask;     // Netmask in host byte order
+    uint32_t start_ip;    // First allocatable IP in host byte order
+    uint32_t router_ip;   // Router IP for this subnet in host byte order
+    uint32_t dns_ip;      // DNS server IP for this subnet in host byte order
+} dhcp_subnet;
+
+dhcp_subnet subnets[2] = {
+    {0xC0A80A00, 0xFFFFFF00, 0xC0A80A64, 0xC0A80A01, 0xC0A80A01}, // 192.168.10.0/24, starting .100
+    {0xC0A81400, 0xFFFFFF00, 0xC0A81464, 0xC0A81401, 0xC0A81401}  // 192.168.20.0/24, starting .100
+};
+
+typedef struct {
+    int active;           // 1 if lease is active, 0 otherwise
+    uint8_t mac[6];       // Client MAC address
+    uint32_t ip;          // Assigned IP address in network byte order
+    time_t lease_start;   // When the lease began
+    time_t lease_end;     // When the lease expires
+    int subnet_idx;       // Which subnet this lease belongs to
+} dhcp_lease;
+
+dhcp_lease leases[MAX_LEASES * 2]; // Double the size for two subnets
 pthread_mutex_t lease_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for lease table access
 
-/* Thread argument structure */
 typedef struct
 {
     struct sockaddr_in client_addr;
@@ -66,7 +90,7 @@ void die(char *s)
 void init_leases()
 {
     pthread_mutex_lock(&lease_mutex);
-    for (int i = 0; i < MAX_LEASES; i++)
+    for (int i = 0; i < MAX_LEASES * 2; i++)
     {
         leases[i].active = 0;
     }
@@ -147,39 +171,80 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
     int i;
     time_t now = time(NULL);
     uint32_t allocated_ip = 0;
+    int subnet_idx = 0; // Default to first subnet
 
     pthread_mutex_lock(&lease_mutex);
-    // Check if this MAC already has a lease
-    for (i = 0; i < MAX_LEASES; i++)
+    
+    // Check if this MAC already has a lease in any subnet
+    for (i = 0; i < MAX_LEASES * 2; i++)
     {
         if (leases[i].active && memcmp(leases[i].mac, mac, 6) == 0)
         {
             leases[i].lease_start = now;
             leases[i].lease_end = now + lease_time;
             allocated_ip = leases[i].ip;
+            subnet_idx = leases[i].subnet_idx;
             break;
         }
     }
+    
     // If no existing lease, allocate a new one
+    // Try first subnet, then second if first is full
     if (allocated_ip == 0)
     {
-        for (i = 0; i < MAX_LEASES; i++)
-        {
-            if (!leases[i].active || leases[i].lease_end < now)
+        for (subnet_idx = 0; subnet_idx < 2; subnet_idx++) {
+            int start_idx = subnet_idx * MAX_LEASES;
+            int end_idx = start_idx + MAX_LEASES;
+            
+            for (i = start_idx; i < end_idx; i++)
             {
-                leases[i].active = 1;
-                memcpy(leases[i].mac, mac, 6);
-                leases[i].lease_start = now;
-                leases[i].lease_end = now + lease_time;
-                // Create IP address in 192.168.10.x format where x is i+100
-                leases[i].ip = htonl(0xC0A80A00 | (i + 100));
-                allocated_ip = leases[i].ip;
-                break;
+                if (!leases[i].active || leases[i].lease_end < now)
+                {
+                    leases[i].active = 1;
+                    memcpy(leases[i].mac, mac, 6);
+                    leases[i].lease_start = now;
+                    leases[i].lease_end = now + lease_time;
+                    leases[i].subnet_idx = subnet_idx;
+                    
+                    // Calculate IP based on subnet and index
+                    uint32_t ip_host = subnets[subnet_idx].start_ip + (i - start_idx);
+                    leases[i].ip = htonl(ip_host);
+                    allocated_ip = leases[i].ip;
+                    break;
+                }
+            }
+            
+            if (allocated_ip != 0) {
+                break; // Found an IP, no need to check second subnet
             }
         }
     }
+    
     pthread_mutex_unlock(&lease_mutex);
     return allocated_ip;
+}
+
+/* Find a lease by IP address */
+int find_lease_by_ip(uint32_t ip) 
+{
+    for (int i = 0; i < MAX_LEASES * 2; i++) {
+        if (leases[i].active && leases[i].ip == ip) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Get subnet index for a given IP */
+int get_subnet_idx(uint32_t ip) 
+{
+    uint32_t ip_host = ntohl(ip);
+    for (int i = 0; i < 2; i++) {
+        if ((ip_host & subnets[i].netmask) == subnets[i].network) {
+            return i;
+        }
+    }
+    return -1; // Not in our subnets
 }
 
 /* Thread function to handle DHCP client requests */
@@ -229,6 +294,15 @@ void *handle_dhcp_request(void *arg)
             free(thread_arg);
             pthread_exit(NULL);
         }
+        
+        // Get subnet info for the allocated IP
+        int subnet_idx = get_subnet_idx(new_ip);
+        if (subnet_idx == -1) {
+            printf("[Thread %lu] Error: IP not in known subnet\n", pthread_self());
+            free(thread_arg);
+            pthread_exit(NULL);
+        }
+        
         // Build DHCP OFFER packet
         dhcp_packet offer;
         int offset = create_dhcp_packet(&offer, DHCPOFFER, packet.xid, 0, new_ip, packet.chaddr);
@@ -236,8 +310,19 @@ void *handle_dhcp_request(void *arg)
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
         uint32_t server_id = si_other.sin_addr.s_addr;
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_id);
-        uint32_t subnet_mask = htonl(0xFFFFFF00); // 255.255.255.0
+        
+        // Add subnet mask
+        uint32_t subnet_mask = htonl(subnets[subnet_idx].netmask);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        
+        // Add router (gateway)
+        uint32_t router_ip = htonl(subnets[subnet_idx].router_ip);
+        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&router_ip);
+        
+        // Add DNS server
+        uint32_t dns_ip = htonl(subnets[subnet_idx].dns_ip);
+        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&dns_ip);
+        
         // Terminate options
         offer.options[offset++] = DHCP_OPTION_END;
 
@@ -262,19 +347,27 @@ void *handle_dhcp_request(void *arg)
         {
             req_ip = packet.ciaddr;
         }
-        // Verify if the requested IP is valid
-        int found = 0;
-        for (int i = 0; i < MAX_LEASES; i++)
-        {
-            if (leases[i].active && leases[i].ip == req_ip &&
-                memcmp(leases[i].mac, packet.chaddr, 6) == 0)
-            {
-                found = 1;
-                leases[i].lease_start = time(NULL);
-                leases[i].lease_end = leases[i].lease_start + 3600;
-                break;
-            }
+        
+        // Get subnet index for requested IP
+        int subnet_idx = get_subnet_idx(req_ip);
+        if (subnet_idx == -1) {
+            printf("[Thread %lu] Requested IP not in our subnets\n", pthread_self());
+            subnet_idx = 0; // Default to first subnet for NAK
         }
+        
+        // Verify if the requested IP is valid
+        int lease_idx = find_lease_by_ip(req_ip);
+        int found = 0;
+        
+        if (lease_idx != -1 && memcmp(leases[lease_idx].mac, packet.chaddr, 6) == 0) {
+            found = 1;
+            pthread_mutex_lock(&lease_mutex);
+            leases[lease_idx].lease_start = time(NULL);
+            leases[lease_idx].lease_end = leases[lease_idx].lease_start + 3600;
+            pthread_mutex_unlock(&lease_mutex);
+            subnet_idx = leases[lease_idx].subnet_idx;
+        }
+        
         // Build DHCP ACK or NAK packet accordingly
         dhcp_packet ack;
         if (found)
@@ -286,14 +379,30 @@ void *handle_dhcp_request(void *arg)
             offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
             uint32_t server_id = si_other.sin_addr.s_addr;
             offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_id);
-            uint32_t subnet_mask = htonl(0xFFFFFF00);
+            
+            // Add subnet mask
+            uint32_t subnet_mask = htonl(subnets[subnet_idx].netmask);
             offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+            
+            // Add router (gateway)
+            uint32_t router_ip = htonl(subnets[subnet_idx].router_ip);
+            offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&router_ip);
+            
+            // Add DNS server
+            uint32_t dns_ip = htonl(subnets[subnet_idx].dns_ip);
+            offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&dns_ip);
+            
             ack.options[offset++] = DHCP_OPTION_END;
         }
         else
         {
             int offset = create_dhcp_packet(&ack, DHCPNAK, packet.xid, 0, 0, packet.chaddr);
             printf("[Thread %lu] Sending DHCP NAK to client\n", pthread_self());
+            
+            // Add server identifier option even for NAK
+            uint32_t server_id = si_other.sin_addr.s_addr;
+            offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_id);
+            
             ack.options[offset++] = DHCP_OPTION_END;
         }
         if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&si_other, slen) == -1)
@@ -303,7 +412,8 @@ void *handle_dhcp_request(void *arg)
     case DHCPRELEASE:
     {
         printf("[Thread %lu] DHCP RELEASE received from client\n", pthread_self());
-        for (int i = 0; i < MAX_LEASES; i++)
+        pthread_mutex_lock(&lease_mutex);
+        for (int i = 0; i < MAX_LEASES * 2; i++) // Search through all subnets
         {
             if (leases[i].active && memcmp(leases[i].mac, packet.chaddr, 6) == 0)
             {
@@ -313,6 +423,7 @@ void *handle_dhcp_request(void *arg)
                 break;
             }
         }
+        pthread_mutex_unlock(&lease_mutex);
         break;
     }
     default:
