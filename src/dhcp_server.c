@@ -14,8 +14,8 @@
 #include "dhcp.h"
 
 #define BUFLEN 512 // Max length of buffer
-#define DHCP_CLIENT_PORT 53630
-#define DHCP_SERVER_PORT 53629
+#define DHCP_CLIENT_PORT 68
+#define DHCP_SERVER_PORT 67
 #define MAX_THREADS 20
 
 /* DHCP Message Types */
