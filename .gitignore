@@ -1,3 +1,7 @@
-.vscode/settings.json
-src/.router-with-privilages.c
-src/.router-doesnt-spawn-new-processes.c
+################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs
+/.vscode
+/src/.*
