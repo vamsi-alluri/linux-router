@@ -1,8 +1,3 @@
-/*
-    Compilation: gcc -o DHCPserver DHCPserver.c -lpthread
-    Execution  : ./DHCPserver <port_number>
-*/
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -20,34 +15,34 @@
 
 /* DHCP Message Types */
 #define DHCPDISCOVER 1
-#define DHCPOFFER   2
+#define DHCPOFFER 2
 #define DHCPREQUEST 3
 #define DHCPDECLINE 4
-#define DHCPACK     5
-#define DHCPNAK     6
+#define DHCPACK 5
+#define DHCPNAK 6
 #define DHCPRELEASE 7
-#define DHCPINFORM  8
+#define DHCPINFORM 8
 
 /* DHCP Options */
-#define DHCP_OPTION_PAD             0
-#define DHCP_OPTION_SUBNET_MASK     1
-#define DHCP_OPTION_ROUTER          3
-#define DHCP_OPTION_DNS_SERVER      6
-#define DHCP_OPTION_DOMAIN_NAME     15
-#define DHCP_OPTION_REQUESTED_IP    50
-#define DHCP_OPTION_LEASE_TIME      51
-#define DHCP_OPTION_MESSAGE_TYPE    53
-#define DHCP_OPTION_SERVER_ID       54
+#define DHCP_OPTION_PAD 0
+#define DHCP_OPTION_SUBNET_MASK 1
+#define DHCP_OPTION_ROUTER 3
+#define DHCP_OPTION_DNS_SERVER 6
+#define DHCP_OPTION_DOMAIN_NAME 15
+#define DHCP_OPTION_REQUESTED_IP 50
+#define DHCP_OPTION_LEASE_TIME 51
+#define DHCP_OPTION_MESSAGE_TYPE 53
+#define DHCP_OPTION_SERVER_ID 54
 #define DHCP_OPTION_PARAMETER_REQUEST 55
-#define DHCP_OPTION_END             255
+#define DHCP_OPTION_END 255
 
-/* DHCP Magic Cookie */
 #define DHCP_MAGIC_COOKIE 0x63825363
 #define MAX_LEASES 10
 dhcp_lease leases[MAX_LEASES];
-pthread_mutex_t lease_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for lease table access
+pthread_mutex_t lease_mutex = PTHREAD_MUTEX_INITIALIZER; 
+pthread_mutex_t thread_count_mutex = PTHREAD_MUTEX_INITIALIZER; 
+int thread_count = 0; 
 
-/* Thread argument structure */
 typedef struct
 {
     struct sockaddr_in client_addr;
@@ -62,7 +57,7 @@ void die(char *s)
     exit(1);
 }
 
-/* Initialize lease table */
+/* lease table */
 void init_leases()
 {
     pthread_mutex_lock(&lease_mutex);
@@ -73,8 +68,7 @@ void init_leases()
     pthread_mutex_unlock(&lease_mutex);
 }
 
-/* Add a DHCP option to the options field.
-   Returns the new offset after appending the option. */
+/* Add a DHCP option to the options field. */
 int add_dhcp_option(uint8_t *options, int offset, uint8_t code, uint8_t len, const uint8_t *data)
 {
     options[offset++] = code;
@@ -110,7 +104,7 @@ const uint8_t *get_dhcp_option(const uint8_t *options, size_t options_len, uint8
 /* Create a DHCP packet with fixed fields and basic options.
    Returns the next free offset in the options field for further options. */
 int create_dhcp_packet(dhcp_packet *packet, uint8_t msg_type, uint32_t xid,
-    uint32_t ciaddr, uint32_t yiaddr, const uint8_t *chaddr)
+                       uint32_t ciaddr, uint32_t yiaddr, const uint8_t *chaddr)
 {
     memset(packet, 0, sizeof(dhcp_packet));
 
@@ -171,7 +165,6 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
                 memcpy(leases[i].mac, mac, 6);
                 leases[i].lease_start = now;
                 leases[i].lease_end = now + lease_time;
-                // Create IP address in 192.168.10.x format where x is i+100
                 leases[i].ip = htonl(0xC0A80A00 | (i + 100));
                 allocated_ip = leases[i].ip;
                 break;
@@ -238,7 +231,6 @@ void *handle_dhcp_request(void *arg)
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_id);
         uint32_t subnet_mask = htonl(0xFFFFFF00); // 255.255.255.0
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
-        // Terminate options
         offer.options[offset++] = DHCP_OPTION_END;
 
         printf("[Thread %lu] Sending DHCP OFFER to client with IP: %s\n",
@@ -275,7 +267,7 @@ void *handle_dhcp_request(void *arg)
                 break;
             }
         }
-        // Build DHCP ACK or NAK packet accordingly
+        // Build DHCP ACK or NAK packet
         dhcp_packet ack;
         if (found)
         {
@@ -320,6 +312,12 @@ void *handle_dhcp_request(void *arg)
     }
 
     free(thread_arg);
+    
+
+    pthread_mutex_lock(&thread_count_mutex);
+    thread_count--;
+    pthread_mutex_unlock(&thread_count_mutex);
+    
     pthread_exit(NULL);
 }
 
@@ -330,7 +328,6 @@ int main(int argc, char *argv[])
     fd_set readfds;
     int s, slen = sizeof(si_other), recv_len, portno, select_ret;
     pthread_t thread_id;
-    int thread_count = 0;
 
     init_leases();
 
@@ -360,7 +357,7 @@ int main(int argc, char *argv[])
             dhcp_packet packet;
             memset(&packet, 0, sizeof(packet));
             if ((recv_len = recvfrom(s, &packet, sizeof(packet), 0,
-                                      (struct sockaddr *)&si_other, &slen)) == -1)
+                                     (struct sockaddr *)&si_other, &slen)) == -1)
                 die("recvfrom()");
 
             printf("Received packet from %s, port number:%d\n",
@@ -383,15 +380,28 @@ int main(int argc, char *argv[])
             thread_arg->socket = s;
             thread_arg->recv_len = recv_len;
 
+            pthread_mutex_lock(&thread_count_mutex);
+            if (thread_count >= MAX_THREADS)
+            {
+                pthread_mutex_unlock(&thread_count_mutex);
+                printf("Maximum number of threads reached. Rejecting request.\n");
+                free(thread_arg);
+                continue;
+            }
+            thread_count++;
+            pthread_mutex_unlock(&thread_count_mutex);
+
             if (pthread_create(&thread_id, NULL, handle_dhcp_request, thread_arg) != 0)
             {
                 perror("pthread_create failed");
+                pthread_mutex_lock(&thread_count_mutex);
+                thread_count--;
+                pthread_mutex_unlock(&thread_count_mutex);
                 free(thread_arg);
                 continue;
             }
 
             pthread_detach(thread_id);
-            thread_count++;
 
             printf("Created thread %lu to handle request (active threads: %d)\n",
                    thread_id, thread_count);
@@ -399,6 +409,7 @@ int main(int argc, char *argv[])
     }
 
     pthread_mutex_destroy(&lease_mutex);
+    pthread_mutex_destroy(&thread_count_mutex);
     close(s);
     return 0;
 }

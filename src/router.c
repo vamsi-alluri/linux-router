@@ -246,8 +246,8 @@ int main() {
     register_signal_handlers();
 
     // Start all services
+    void (*entries[NUM_SERVICES])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     for (int i = 0; i < NUM_SERVICES; i++) {
-        void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
         start_service(&services[i], entries[i]);
     }
 

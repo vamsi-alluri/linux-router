@@ -1,8 +1,4 @@
-/*
-    Compilation: gcc -o dhcp_client dhcp_client.c
-    Execution  : sudo ./dhcp_client
-*/
-
+/* for the testing server */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +11,7 @@
 #include <netinet/udp.h>
 #include <netinet/ip.h>
 #include <time.h>
+#include "dhcp.h"
 
 /* DHCP Constants */
 #define DHCP_CLIENT_PORT 53630
@@ -36,26 +33,6 @@
 
 #define DHCP_MAGIC_COOKIE 0x63825363
 
-/* DHCP Packet Structure (as in RFC 2131) */
-#pragma pack(push, 1)
-typedef struct {
-    uint8_t  op;      /* Message op code / message type (1 = BOOTREQUEST, 2 = BOOTREPLY) */
-    uint8_t  htype;   /* Hardware address type (Ethernet = 1) */
-    uint8_t  hlen;    /* Hardware address length (Ethernet = 6) */
-    uint8_t  hops;    /* Client sets to 0, relay agents increment */
-    uint32_t xid;     /* Transaction ID */
-    uint16_t secs;    /* Seconds elapsed since client began address acquisition */
-    uint16_t flags;   /* Flags (bit 0: Broadcast) */
-    uint32_t ciaddr;  /* Client IP address (if already in use) */
-    uint32_t yiaddr;  /* 'Your' (client) IP address */
-    uint32_t siaddr;  /* IP address of next server to use in bootstrap */
-    uint32_t giaddr;  /* Relay agent IP address */
-    uint8_t  chaddr[16];  /* Client hardware address */
-    uint8_t  sname[64];   /* Server host name (optional) */
-    uint8_t  file[128];   /* Boot file name (optional) */
-    uint8_t  options[312];/* Optional parameters (actual length dependent on MTU) */
-} dhcp_packet;
-#pragma pack(pop)
 
 /* Helper function to print an IP address from a uint32_t in network byte order */
 void print_ip(const char *msg, uint32_t ip)
