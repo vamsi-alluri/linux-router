@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/select.h>
 #include <stdbool.h>
@@ -11,6 +12,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <sys/prctl.h>
 
 // Service headers
 #include "dhcpd.h"
@@ -24,7 +26,7 @@
 
 int verbose = 0;
 char *progname;
-const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "nat", "dns", "ntp"};
+const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "napt", "_dns", "_ntp"};
 volatile sig_atomic_t shutdown_requested_flag = 0;
 
 typedef struct {
@@ -32,6 +34,7 @@ typedef struct {
     int router_to_svc[2];
     int svc_to_router[2];
     bool running;
+    char name[5];
 } service_t;
 
 typedef struct {
@@ -41,14 +44,14 @@ typedef struct {
 
 
 /* ================= Process Creation ================= */
-static void daemonize_process(int rx_fd, int tx_fd) {
+static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
     // First fork to create background process
-    pid_t pid = fork();
-    if (pid < 0) {
+    pid_t first_pid = fork();
+    if (first_pid < 0) {
         perror("fork");
         exit(EXIT_FAILURE);
     }
-    if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
+    if (first_pid > 0) exit(EXIT_SUCCESS); // Parent exits
 
     // Create new session and process group
     if (setsid() < 0) {
@@ -57,12 +60,18 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     }
 
     // Second fork to ensure no terminal association
-    pid = fork();
+    pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
         exit(EXIT_FAILURE);
     }
     if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
+
+    prctl(PR_SET_NAME, name); // Set /proc/pid/comm name
+    if (argv[0]) { // Overwrite argv[0] for ps/top visibility
+        strncpy(argv[0], name, 4);
+        argv[0][4] = '\0';
+    }
 
     // Set file permissions
     umask(0);
@@ -79,7 +88,7 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     dup(0); // stderr
 }
 
-void start_service(service_t *svc, void (*entry)(int, int)) {
+void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -101,28 +110,28 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         close(svc->router_to_svc[1]);
         close(svc->svc_to_router[0]);
 
-        daemonize_process(svc->router_to_svc[0], svc->svc_to_router[1]);
+        daemonize_process(svc->router_to_svc[0], svc->svc_to_router[1], argv, svc->name);
         
         // Notify router we're ready
-        write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
+        // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
         entry(svc->router_to_svc[0], svc->svc_to_router[1]);
-        
+
         close(svc->router_to_svc[0]); // Close pipes before exit
         close(svc->svc_to_router[1]);
 
         exit(EXIT_SUCCESS);
     } 
     else { // Router process
-        close(svc->router_to_svc[0]); // Close unused pipes
+        close(svc->router_to_svc[0]);
         close(svc->svc_to_router[1]);
 
         // Wait for service ready signal
-        char buf[sizeof(SERVICE_READY_MSG)];
-        if (read(svc->svc_to_router[0], buf, sizeof(buf)) > 0) {
+        int receiving_pid;
+        if (read(svc->svc_to_router[0], &receiving_pid, sizeof(receiving_pid)) > 0) {
             svc->running = true;
-            svc->pid = pid - 1;     // TODO: Have to figure out whey this is the case.
-            printf("Service (PID %d) started\n", svc->pid);
+            svc->pid = receiving_pid;
+            printf("Service %s (PID %d) started\n", svc->name, svc->pid);
         }
     }
 }
@@ -331,7 +340,11 @@ int main(int argc, char *argv[]) {
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {
         void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
-        start_service(&services[i], entries[i]);
+        service_t *service_selected = &services[i];
+        strncpy(service_selected->name, SERVICE_NAMES[i], 4);
+        (service_selected->name)[4] = '\0';
+
+        start_service(service_selected, argv, entries[i]);
     }
 
     // Main event loop
