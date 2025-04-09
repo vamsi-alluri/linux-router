@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdarg.h>
 
 // Service headers
 #include "dhcpd.h"
@@ -17,8 +18,14 @@
 #include "dnsd.h"
 #include "ntpd.h"
 
+/* ================= Globals ================= */
 #define NUM_SERVICES 4
 #define SERVICE_READY_MSG "READY"
+
+int verbose = 0;
+char *progname;
+const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "nat", "dns", "ntp"};
+volatile sig_atomic_t shutdown_requested_flag = 0;
 
 typedef struct {
     pid_t pid;
@@ -32,28 +39,20 @@ typedef struct {
     char command[256];
 } router_command;
 
-const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "nat", "dns", "ntp"};
 
+/* ================= Process Creation ================= */
 static void daemonize_process(int rx_fd, int tx_fd) {
     // First fork to create background process
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
-        close(rx_fd); // Close pipes before exit
-        close(tx_fd);
         exit(EXIT_FAILURE);
     }
-    if (pid > 0) {
-        close(rx_fd); // Close pipes before exit
-        close(tx_fd);
-        exit(EXIT_SUCCESS); // Parent exits
-    }
+    if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
 
     // Create new session and process group
     if (setsid() < 0) {
         perror("setsid");
-        close(rx_fd); // Close pipes before exit
-        close(tx_fd);
         exit(EXIT_FAILURE);
     }
 
@@ -61,15 +60,9 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     pid = fork();
     if (pid < 0) {
         perror("fork");
-        close(rx_fd); // Close pipes before exit
-        close(tx_fd);
         exit(EXIT_FAILURE);
     }
-    if (pid > 0) {
-        close(rx_fd); // Close pipes before exit
-        close(tx_fd);
-        exit(EXIT_SUCCESS); // Parent exits
-    }
+    if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
 
     // Set file permissions
     umask(0);
@@ -105,6 +98,7 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
 
     if (pid == 0) { // Service process
         close(svc->router_to_svc[1]); // Close unused pipes
+        close(svc->router_to_svc[1]);
         close(svc->svc_to_router[0]);
 
         daemonize_process(svc->router_to_svc[0], svc->svc_to_router[1]);
@@ -113,8 +107,10 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
         entry(svc->router_to_svc[0], svc->svc_to_router[1]);
+        
         close(svc->router_to_svc[0]); // Close pipes before exit
         close(svc->svc_to_router[1]);
+
         exit(EXIT_SUCCESS);
     } 
     else { // Router process
@@ -125,16 +121,29 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         char buf[sizeof(SERVICE_READY_MSG)];
         if (read(svc->svc_to_router[0], buf, sizeof(buf)) > 0) {
             svc->running = true;
-            printf("Service (PID %d) started\n", pid);
+            svc->pid = pid - 1;     // TODO: Have to figure out whey this is the case.
+            printf("Service (PID %d) started\n", svc->pid);
         }
     }
 }
 
 /* ================= Signal Handling & Cleanup ================= */
-volatile sig_atomic_t shutdown_requested = 0;
+void confirm_before_shutdown(){
+    fprintf(stderr, "\n!!!CAUTION!!!\nShuts down all services.\n\nAre you sure? (y):");
+    char test_y_n = getchar();
+    if ('y' == test_y_n || 'Y' == test_y_n){
+        shutdown_requested_flag = 1;
+    }
+    return;
+}
 
 void sigint_handler(int sig) {
-    shutdown_requested = 1;
+    if (verbose == 0){
+        confirm_before_shutdown();
+    }
+    else{           // Shutdowns without confirmation while testing.
+        shutdown_requested_flag = 1;
+    }
 }
 
 void register_signal_handlers() {
@@ -170,13 +179,55 @@ void cleanup_services(service_t *services) {
     }
 }
 
-void confirm_before_shutdown(){
-    fprintf(stderr, "!!!CAUTION!!!\nShuts down all services.\n\nAre you sure? (y):");
-    char test_y_n = getchar();
-    if ('y' == test_y_n || 'Y' == test_y_n){
-        shutdown_requested = 1;
+// TODO: This is NOT WORKING.
+bool is_service_running(service_t *svc) {
+    fprintf(stderr, "is_service_running pid: %d", svc->pid);
+    if ((svc->pid) > 0){
+        // Kill 0 returns 0 if the process is running.
+        int result_from_kill = kill((svc->pid), 0); 
+        fprintf(stderr, "Result from kill: %d", result_from_kill);
+        return !result_from_kill;
     }
-    return;
+    else
+        return false;
+}
+
+/* ================= Debug Messages ================= */
+void print_hex_ln(const char *message, unsigned char *data, int length) {
+    if (verbose == 1){
+        int i;
+        fprintf(stderr, "XXXX %s", message);
+        for(i=0; i<length; i++) {
+        if(i%16 == 0) {
+            fprintf(stderr, "\n");
+        }
+        fprintf(stderr, "%02x ", data[i]);
+        }
+        fprintf(stderr, "\n");
+    }
+}
+
+// Prints anything you pass into stderr for faster flushing.
+void print_verboseln(char *message, ...){
+    if (verbose == 1){
+      va_list argp;
+      
+      va_start(argp, message);
+      vfprintf(stderr, message, argp);
+      vfprintf(stderr, "\n", argp);
+      va_end(argp);
+    }
+}
+
+void print_help(service_t *services){
+    fprintf(stderr, "Available commands:\n");
+    fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
+    fprintf(stderr, "  help                - Show this help\n");
+    fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
+    fprintf(stderr, "Available services:\n");
+    for (int i = 0; i < NUM_SERVICES; i++) {
+        fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
+    }
 }
 
 /* ================= Command Handling ================= */
@@ -191,9 +242,8 @@ void handle_service_response(int service_id, int fd) {
 // TODO: Have to handle first root@router# print.
 void handle_cli_input(service_t *services) {
     char raw_cmd[256];
-    // fprintf(stderr, "root@router# ");
-    printf("root@router# "); 
-    fflush(stdout);
+    fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
+
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
 
     // Trim newline
@@ -203,6 +253,7 @@ void handle_cli_input(service_t *services) {
     char *delim = strchr(raw_cmd, ':');
     
     if (delim) {
+        // Delimiter present: Direct command to specific service.
         *delim = '\0';
         char *service_name = raw_cmd;
         char *command = delim + 1;
@@ -229,50 +280,62 @@ void handle_cli_input(service_t *services) {
 
         if (cmd.service_id >= 0 && cmd.service_id < NUM_SERVICES) {
             if (services[cmd.service_id].running) {
-                write(services[cmd.service_id].router_to_svc[1], 
-                     cmd.command, strlen(cmd.command)+1);
+                write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
                 fprintf(stderr, "Command sent to %s service\n", SERVICE_NAMES[cmd.service_id]);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
         }
-    } else {
-        // Handle all the commands.
+    } 
+    else {
+        // Commands to router: Handle all the commands.
         if (strcmp(raw_cmd, "q") == 0) {
             confirm_before_shutdown();
         } else if (strcmp(raw_cmd, "help") == 0) {
-            fprintf(stderr, "Available commands:\n");
-            fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
-            fprintf(stderr, "  help                - Show this help\n");
-            fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
-            fprintf(stderr, "Available services:\n");
-            for (int i = 0; i < NUM_SERVICES; i++) {
-                fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], 
-                        services[i].running ? "running" : "not running");
-            }
+            print_help(services);
         }
         else if (strcmp(raw_cmd, "") == 0){
-            return;
+            return;                         // For an empty line or a return.
         } 
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
+            print_help(services);
         }
     }
 }
 
 /* ================= Main Application ================= */
-int main() {
+int main(int argc, char *argv[]) {
+    progname = argv[0];
+    
+    int option;
+
+    if (argc > 1){    
+        fprintf(stderr, "Got more arguments %s\n", argv[1]);
+        while((option = getopt(argc, argv, "v")) != -1){
+            switch(option) {
+                case 'v':
+                    verbose = 1;
+                    print_verboseln("Verbose mode enabled.");
+                    break;
+                default:
+                    fprintf(stderr, "Default option.\n");
+                    break;
+            }
+        }
+    }
+
     service_t services[NUM_SERVICES] = {0};
     register_signal_handlers();
 
     // Start all services
-    void (*entries[NUM_SERVICES])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     for (int i = 0; i < NUM_SERVICES; i++) {
+        void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
         start_service(&services[i], entries[i]);
     }
 
     // Main event loop
-    while (!shutdown_requested) {
+    while (!shutdown_requested_flag) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
