@@ -39,13 +39,21 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
+        close(rx_fd); // Close pipes before exit
+        close(tx_fd);
         exit(EXIT_FAILURE);
     }
-    if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
+    if (pid > 0) {
+        close(rx_fd); // Close pipes before exit
+        close(tx_fd);
+        exit(EXIT_SUCCESS); // Parent exits
+    }
 
     // Create new session and process group
     if (setsid() < 0) {
         perror("setsid");
+        close(rx_fd); // Close pipes before exit
+        close(tx_fd);
         exit(EXIT_FAILURE);
     }
 
@@ -53,9 +61,15 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     pid = fork();
     if (pid < 0) {
         perror("fork");
+        close(rx_fd); // Close pipes before exit
+        close(tx_fd);
         exit(EXIT_FAILURE);
     }
-    if (pid > 0) exit(EXIT_SUCCESS); // Parent exits
+    if (pid > 0) {
+        close(rx_fd); // Close pipes before exit
+        close(tx_fd);
+        exit(EXIT_SUCCESS); // Parent exits
+    }
 
     // Set file permissions
     umask(0);
@@ -82,11 +96,15 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
+        close(svc->router_to_svc[0]); // Close pipes before exit
+        close(svc->router_to_svc[1]);
+        close(svc->svc_to_router[0]);
+        close(svc->svc_to_router[1]);
         exit(EXIT_FAILURE);
     }
 
     if (pid == 0) { // Service process
-        close(svc->router_to_svc[1]);
+        close(svc->router_to_svc[1]); // Close unused pipes
         close(svc->svc_to_router[0]);
 
         daemonize_process(svc->router_to_svc[0], svc->svc_to_router[1]);
@@ -95,10 +113,12 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
         entry(svc->router_to_svc[0], svc->svc_to_router[1]);
+        close(svc->router_to_svc[0]); // Close pipes before exit
+        close(svc->svc_to_router[1]);
         exit(EXIT_SUCCESS);
     } 
     else { // Router process
-        close(svc->router_to_svc[0]);
+        close(svc->router_to_svc[0]); // Close unused pipes
         close(svc->svc_to_router[1]);
 
         // Wait for service ready signal
