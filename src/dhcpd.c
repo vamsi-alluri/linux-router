@@ -6,12 +6,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <errno.h>
 #include "dhcpd.h"
 
 #define BUFLEN 512 // Max length of buffer
-#define DHCP_CLIENT_PORT 53630
-#define DHCP_SERVER_PORT 53629
+#define DHCP_CLIENT_PORT 68
+#define DHCP_SERVER_PORT 67
 #define MAX_THREADS 20
+#define MAX_LEASES 10 
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
@@ -493,6 +495,7 @@ void *handle_dhcp_request(void *arg)
     pthread_exit(NULL);
 }
 
+/* Removing the main function as it conflicts with router.c's main function
 int main(int argc, char *argv[])
 {
     struct sockaddr_in si_me, si_other;
@@ -585,3 +588,4 @@ int main(int argc, char *argv[])
     close(s);
     return 0;
 }
+*/
