@@ -410,6 +410,7 @@ int add_dhcp_option(uint8_t *options, int offset, uint8_t code, uint8_t len, con
 }
 
 const uint8_t *get_dhcp_option(const uint8_t *options, size_t options_len, uint8_t code, size_t *len)
+{
     const uint8_t *end = options + options_len;
     const uint8_t *curr = options;
 
