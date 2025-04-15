@@ -22,7 +22,7 @@
 #define DHCP_SERVER_PORT 67
 #define MAX_THREADS 20
 #define MAX_LEASES 10 
-#define DEFAULT_INTERFACE "eth0"  
+char dhcp_interface[IFNAMSIZ] = "enp0s8";  
 
 dhcp_lease leases[MAX_LEASES];
 pthread_mutex_t lease_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -55,7 +55,7 @@ void die(char *s);
 void listLeases(int tx_fd);
 int countActiveLeases();
 void dhcp_main(int rx_fd, int tx_fd);
-
+void dhcp_set_interface(const char *interface_name);
 
 // Main DHCP service function that communicates with router
 void dhcp_main(int rx_fd, int tx_fd) {
@@ -73,7 +73,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
         // Set interface for raw socket
         struct ifreq ifr;
         memset(&ifr, 0, sizeof(ifr));
-        strncpy(ifr.ifr_name, DEFAULT_INTERFACE, IFNAMSIZ-1);
+        strncpy(ifr.ifr_name, dhcp_interface, IFNAMSIZ-1);
         
         if (ioctl(raw_socket, SIOCGIFINDEX, &ifr) < 0) {
             snprintf(buffer, sizeof(buffer), "Error: Could not get interface index - %s\n", strerror(errno));
@@ -94,7 +94,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
                 raw_socket = -1;
             } else {
                 snprintf(buffer, sizeof(buffer), "DHCP: LPF/%s/%s initialized (raw socket)\n", 
-                         DEFAULT_INTERFACE, "00:00:00:00:00:00"); // Placeholder for actual MAC
+                         dhcp_interface, "00:00:00:00:00:00"); // Placeholder for actual MAC
                 write(tx_fd, buffer, strlen(buffer));
             }
         }
@@ -649,7 +649,7 @@ int send_dhcp_packet(dhcp_packet *packet, struct sockaddr_in *client_addr, int p
         // Get interface index 
         struct ifreq ifr;
         memset(&ifr, 0, sizeof(ifr));
-        strncpy(ifr.ifr_name, DEFAULT_INTERFACE, IFNAMSIZ-1);
+        strncpy(ifr.ifr_name, dhcp_interface, IFNAMSIZ-1);
         if (ioctl(raw_socket, SIOCGIFINDEX, &ifr) < 0) {
             perror("send_dhcp_packet: failed to get interface index");
             goto use_fallback;
@@ -828,4 +828,12 @@ uint16_t checksum(unsigned short *buf, int size) {
     sum = (sum & 0xFFFF) + (sum >> 16);
     
     return (uint16_t)~sum;
+}
+
+// Function to set the DHCP interface
+void dhcp_set_interface(const char *interface_name) {
+    if (interface_name && strlen(interface_name) < IFNAMSIZ) {
+        strncpy(dhcp_interface, interface_name, IFNAMSIZ-1);
+        dhcp_interface[IFNAMSIZ-1] = '\0'; // Ensure null termination
+    }
 }
