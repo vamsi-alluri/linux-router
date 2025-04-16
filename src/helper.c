@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <arpa/inet.h>
+#include <string.h>
 #include "helper.h"
 
 #pragma pack(push, 1)       // Lock the memory structure.
