@@ -17,24 +17,24 @@ typedef struct
 } ntp_packet;
 
 
-// typedef struct {
-//     unsigned char dst[6];
-//     unsigned char src[6];
-//     short type;
-// } ethhdr;
+typedef struct {
+    unsigned char dst[6];
+    unsigned char src[6];
+    short type;
+} ethhdr;
 
-// typedef struct {
-//     unsigned char len:4, var:4;
-//     unsigned char ser;
-//     unsigned short tot;
-//     unsigned short ide;
-//     unsigned short flg:3, frg:13;
-//     unsigned char tml;
-//     unsigned char ptc;
-//     unsigned short chk;
-//     unsigned int src;
-//     unsigned int dst;
-// } iphdr;
+typedef struct {
+    unsigned char len:4, var:4;
+    unsigned char ser;
+    unsigned short tot;
+    unsigned short ide;
+    unsigned short flg:3, frg:13;
+    unsigned char tml;
+    unsigned char ptc;
+    unsigned short chk;
+    unsigned int src;
+    unsigned int dst;
+} iphdr;
 
 // typedef struct {
 //     unsigned short src;
@@ -48,12 +48,12 @@ typedef struct
 //     unsigned short upt;
 // } tcphdr;
 
-// typedef struct {
-//     unsigned short src;
-//     unsigned short dst;
-//     unsigned short len;
-//     unsigned short sum;
-// } udphdr;
+typedef struct {
+    unsigned short src;
+    unsigned short dst;
+    unsigned short len;
+    unsigned short sum;
+} udphdr;
 
 
 void ntp_main(int rx_fd, int tx_fd);

@@ -13,10 +13,11 @@
 #define NTPD_PORT 123
 
 void ntp_main(int rx_fd, int tx_fd){
-    struct sockaddr_in ser_addr, cli_addr;
+    struct sockaddr_in cli_addr;
     int flags, s, slen = sizeof(cli_addr), recv_len, send_len, select_ret;
+    char buff[1500];
 
-    if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+    if ((s = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) < 0) {
         perror("socket");
         return -1;
     }
@@ -24,6 +25,16 @@ void ntp_main(int rx_fd, int tx_fd){
     struct ifreq myreq;
     memset(&myreq, 0, sizeof(myreq));
     strncpy(myreq.ifr_name, "enp0s8", IFNAMSIZ);
+
+    if (ioctl(s, SIOCGIFFLAGS, &myreq) < 0) {
+        perror("ioctl-get");
+        return -1;
+    }
+    myreq.ifr_flags |= IFF_PROMISC;
+    if (ioctl(s, SIOCSIFFLAGS, &myreq) < 0) {
+        perror("ioctl-set");
+        return -1;
+    }
     
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0) {
         perror("setsockopt");
@@ -43,19 +54,14 @@ void ntp_main(int rx_fd, int tx_fd){
         return -1;
     }
 
-    memset((char *)&ser_addr, 0, sizeof(ser_addr));
-    ser_addr.sin_family = AF_INET;
-    ser_addr.sin_port = htons(NTPD_PORT);
-    ser_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0) {
-        perror("bind");
-        close(s);
-        return -1;
-    }
+    int len;
+    ethhdr *p;
+    iphdr *ip;
+    udphdr *up;
+    ntp_packet *out_packet;
 
     // system("clear");
-    printf("...This is NTP server (Non-Blocking Version) listening on port %d...\n\n", NTPD_PORT);
+    printf("...This is NTP server (Non-Blocking Version) listening on every port...\n\n");
 
     struct timeval tv = {5, 0}; // 5 seconds, 0 microseconds
     fd_set rfds;
@@ -72,16 +78,53 @@ void ntp_main(int rx_fd, int tx_fd){
 
         ntp_packet in_packet;
         memset(&in_packet, 0, sizeof(in_packet));
-        if ((recv_len = recvfrom(s, &in_packet, sizeof(in_packet), 0,
+        if ((recv_len = recvfrom(s, buff, sizeof(buff), 0,
                                     (struct sockaddr *)&cli_addr, &slen)) < 0) {
             perror("recvfrom");
             continue;
         }
+        p = (ethhdr *) buff;
+        // printf("dst=%02x", p->dst[0]);
+        // for (int i = 1; i < 6; i++) {
+        //     printf(":%02x", p->dst[i]);
+        // }
+        // printf("  src=%02x", p->src[0]);
+        // for (int i = 1; i < 6; i++) {
+        // printf(":%02x", p->src[i]);
+        // }
+        // printf("  type=%04x ", ntohs(p->type));
+        if (ntohs(p->type) != 0x0800) continue;
+        ip = (iphdr *)((char *)p + sizeof(ethhdr));
+        // unsigned int src = ntohl(ip->src);
+        // unsigned int dst = ntohl(ip->dst);
+        // printf("IP: src=%d.%d.%d.%d  dst=%d.%d.%d.%d  ", 
+        //         (src >> 24) & 0xFF, (src >> 16) & 0xFF, 
+        //         (src >> 8) & 0xFF, src & 0xFF, 
+        //         (dst >> 24) & 0xFF, (dst >> 16) & 0xFF, 
+        //         (dst >> 8) & 0xFF, dst & 0xFF);
+        if (ip->ptc != IPPROTO_UDP) continue;
+        up = (udphdr *)((char *)ip + (ip->len * 4));
+        // unsigned short ulen = ntohs(up->len);
+        // printf("UDP: src_port=%d  dst_port=%d  length=%d  pay=", 
+		// 	    ntohs(up->src), ntohs(up->dst), ulen);
+	    out_packet = (ntp_packet *)((char *)up + sizeof(udphdr));
+	    // int limit = ulen - sizeof(struct udphdr);
+	    // limit = (20 < limit) ? 20 : limit;
+	    // for (int i = 0; i < limit; i++) {
+		//     if (i != 0) { printf(" "); }
+	    // 	if ((32 <= payload[i]) && (payload[i] <= 126) ) {
+		//         printf("%c", payload[i]);
+        //     }
+        //     else {
+	    //   	    printf("%02x", payload[i]);
+		//     }
+	    // }
+
 
         printf("Received packet from %s, port number:%d\n",
                 inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
-        ntp_packet out_packet;
+        
         memset(&out_packet, 0, sizeof(out_packet));
         out_packet.li = 0;                          // No warning
         out_packet.vn = 4;                          // Version 4
