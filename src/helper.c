@@ -4,31 +4,74 @@
 #include <string.h>
 #include "helper.h"
 
-struct eth_header* extract_ethernet(const uint8_t* frame) {
-    return (struct eth_header*)frame;
+
+// transforms raw data to eth frame.
+const struct raw_ethernet_frame* extract_ethernet_frame(const uint8_t* network_buffer) {
+    return (const struct raw_ethernet_frame*)network_buffer;
 }
 
-struct ipv4_header* extract_ipv4(const uint8_t* frame) {
-    return (struct ipv4_header*)(frame + sizeof(struct eth_header));
+// Extracts eth header from eth frame.
+const struct ethernet_header* extract_ethernet_header_from_frame(const struct raw_ethernet_frame* frame) {
+    return &frame->header;
 }
 
-struct tcp_header* extract_tcp(const uint8_t* frame) {
-    struct ipv4_header* ip = extract_ipv4(frame);
-    return (struct tcp_header*)((uint8_t*)ip + (ip->ihl * 4));
+// Extracts eth header from raw data.
+const struct ethernet_header* extract_ethernet_header_from_buffer(const struct raw_ethernet_frame* frame) {
+    return (const struct ethernet_header*)frame;
 }
 
-struct udp_header* extract_udp(const uint8_t* frame) {
-    struct ipv4_header* ip = extract_ipv4(frame);
-    return (struct udp_header*)((uint8_t*)ip + (ip->ihl * 4));
+// raw ethernet frame -> IPV4 packet
+const struct ipv4_packet* extract_ipv4_packet_from_eth_frame(const uint8_t* raw_ethernet_frame) {
+    const struct raw_ethernet_frame* frame = extract_ethernet_frame(raw_ethernet_frame);
+    return (const struct ipv4_packet*)frame->payload;
+}
+
+// ethernet payload -> IPV4 packet
+const struct ipv4_packet* extract_ipv4_packet_from_eth_payload(uint8_t* payload_from_frame) {
+    return (const struct ipv4_packet*)payload_from_frame;
+}
+
+// raw ethernet frame -> IPV4 header
+const struct ipv4_header* extract_ipv4_header_from_eth_frame(const uint8_t* frame) {
+    return (const struct ipv4_header*)(frame + sizeof(struct ethernet_header));
+}
+
+// IPV4 packet -> IPV4 header
+const struct ipv4_header* extract_ipv4_header_from_ipv4_packet(const struct ipv4_packet* packet) {
+    return &packet->header;
+}
+
+// ipv4 packet -> TCP header
+const struct tcp_header* extract_tcp_header_from_ipv4_packet(const struct ipv4_packet* packet){
+    return (const struct tcp_header*)((uint8_t*)packet + sizeof(struct ipv4_header));
+}
+
+// raw ethernet frame -> TCP header
+const struct tcp_header* extract_tcp_header_from_ethernet_frame(const uint8_t* frame) {
+    const struct raw_ethernet_frame* eth_frame = extract_ethernet_frame(frame);
+    const struct ipv4_packet* ip_pkt = extract_ipv4_packet_from_eth_payload(eth_frame->payload);
+    return extract_tcp_header_from_ipv4_packet(ip_pkt);
+}
+
+// ipv4 packet -> UDP header
+const struct udp_header* extract_udp_header_from_ipv4_packet(const struct ipv4_packet* packet){
+    return (const struct udp_header*)((uint8_t*)packet + sizeof(struct ipv4_header));
+}
+
+// raw ethernet frame -> UDP header
+const struct udp_header* extract_udp_header_from_ethernet_frame(const uint8_t* frame) {
+    const struct raw_ethernet_frame* eth_frame = extract_ethernet_frame(frame);
+    const struct ipv4_packet* ip_pkt = extract_ipv4_packet_from_eth_payload(eth_frame->payload);
+    return extract_udp_header_from_ipv4_packet(ip_pkt);
 }
 
 
-void reassemble_ethernet(uint8_t* frame, const struct eth_header* eth, 
-                            const struct ipv4_header* ip,const void* transport_header, 
-                            const uint8_t* payload, size_t payload_len) 
+void reassemble_ethernet(const struct raw_ethernet_frame frame, const struct ethernet_header* eth, 
+							 const struct ipv4_header* ip, const struct tcp_header* transport_header, 
+							 const uint8_t* payload, size_t payload_len)
 {
-    memcpy(frame, eth, sizeof(struct eth_header));
-    uint8_t* ip_start = frame + sizeof(struct eth_header);
+    memcpy(frame, eth, sizeof(struct ethernet_header));
+    uint8_t* ip_start = frame + sizeof(struct ethernet_header);
     memcpy(ip_start, ip, ip->ihl * 4);
 
     uint8_t* transport_start = ip_start + (ip->ihl * 4);

@@ -5,10 +5,16 @@
 
 #pragma pack(push, 1)       // Lock the memory structure.
 
-struct eth_header {
+struct ethernet_header {
     uint8_t dst_mac[6];
     uint8_t src_mac[6];
     uint16_t type;
+};
+
+struct raw_ethernet_frame {
+    struct ethernet_header header;           // 14 bytes
+    uint8_t payload[1500];              // Max MTU
+    uint32_t frame_check_sequence;      // 4 bytes. It uses CRC to calculate the checksum. Check whether FCS is received at layer 2. 
 };
 
 struct ipv4_header {
@@ -25,6 +31,13 @@ struct ipv4_header {
     uint32_t daddr;
 };
 
+struct ipv4_packet{
+    struct ipv4_header header;
+    uint8_t* payload;
+};
+
+// Using only TCP header as we don't need TCP payload for router operations.
+// Consider the memory size from the DATA OFFSET for checksum calculation.
 struct tcp_header {
     uint16_t sport;     // SRC PORT
     uint16_t dport;     // DST PORT
@@ -48,12 +61,13 @@ struct tcp_header {
     
     uint16_t window;    // Receive window size
     uint16_t check;     // Checksum
-    uint16_t urg_ptr;   // Urgent pointer (if URG flag set)
+    uint16_t urg_ptr;   // Urgent pointer (iff URG flag set)
     // OPTIONS start from here and are of arbitrary length, it's definied with padding. Handle them as necessary.
     // You can find the data start using data offset value.
 };
 
-
+// Using only UDP header as we don't need UDP payload for router operations.
+// Consider the memory size from the DATA LENGTH for checksum calculation.
 struct udp_header {
     uint16_t sport;     // SRC PORT
     uint16_t dport;     // DST PORT
@@ -63,14 +77,19 @@ struct udp_header {
 
 #pragma pack(pop)
 
-// Function prototypes
-struct eth_header* extract_ethernet(const uint8_t* frame);
-struct ipv4_header* extract_ipv4(const uint8_t* frame);
-struct tcp_header* extract_tcp(const uint8_t* frame);
-struct udp_header* extract_udp(const uint8_t* frame);
+// Function prototypes NEW
+const struct raw_ethernet_frame* extract_ethernet_frame(const uint8_t* network_buffer)
+const struct ethernet_header* extract_ethernet_header_from_frame(const struct raw_ethernet_frame* frame);
+const struct ipv4_packet* extract_ipv4_packet_from_eth_payload(const uint8_t* eth_payload);
+const struct ipv4_header* extract_ipv4_header_from_ipv4_packet(const struct ipv4_packet* packet);
+const struct tcp_header* extract_tcp_header_from_ipv4_packet(const struct ipv4_packet* packet);
+const struct tcp_header* extract_tcp_header_from_ethernet_frame(const uint8_t* frame);
+const struct udp_header* extract_udp_header_from_ipv4_packet(const struct ipv4_packet* packet);
+const struct udp_header* extract_udp_header_from_ethernet_frame(const uint8_t* frame);
+// end of NEW
 
-void reassemble_ethernet(uint8_t* frame, const struct eth_header* eth, 
-							 const struct ipv4_header* ip,const void* transport_header, 
+void reassemble_ethernet(const struct raw_ethernet_frame frame, const struct ethernet_header* eth, 
+							 const struct ipv4_header* ip, const struct tcp_header* transport_header, 
 							 const uint8_t* payload, size_t payload_len);
 
 uint16_t compute_checksum(const void* data, size_t len);
