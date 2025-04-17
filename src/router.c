@@ -193,7 +193,9 @@ void cleanup_services(service_t *services) {
     }
 }
 
-// TODO: This is NOT WORKING.
+// TODO: This is NOT WORKING
+// Testcase: kill a specific process using <service>:shutdown, and check the running services.
+// This function shows the process as running and the next process as dead.
 bool is_service_running(service_t *svc) {
     print_verboseln("is_service_running pid: %d", svc->pid);
     if ((svc->pid) > 0){
@@ -250,6 +252,7 @@ void print_help(service_t *services){
             fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
         }
     }
+    fprintf(stderr, "\nroot@router# ");
 
 }
 
@@ -258,7 +261,7 @@ void handle_service_response(int service_id, int fd) {
     char buffer[256];
     ssize_t count = read(fd, buffer, sizeof(buffer));
     if (count > 0) {
-        printf("[Service %d] %.*s", service_id, (int)count, buffer);
+        printf("[Service %d] %.*s\n", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }
 }
