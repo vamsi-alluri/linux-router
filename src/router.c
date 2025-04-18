@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <sys/prctl.h>
 
 // Service headers
 #include "dhcpd.h"
@@ -32,6 +33,7 @@ typedef struct {
     int router_to_svc[2];
     int svc_to_router[2];
     bool running;
+    char name[5];
 } service_t;
 
 typedef struct {
@@ -42,16 +44,16 @@ typedef struct {
 void print_verboseln(char *message, ...);
 
 /* ================= Process Creation ================= */
-static void daemonize_process(int rx_fd, int tx_fd) {
+static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
     // First fork to create background process
-    pid_t pid = fork();
-    if (pid < 0) {
+    pid_t first_pid = fork();
+    if (first_pid < 0) {
         perror("fork");
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_FAILURE);
     }
-    if (pid > 0) {
+    if (first_pid > 0) {
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS); // Parent exits
@@ -66,7 +68,7 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     }
 
     // Second fork to ensure no terminal association
-    pid = fork();
+    pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
         close(rx_fd); // Close pipes before exit
@@ -77,6 +79,12 @@ static void daemonize_process(int rx_fd, int tx_fd) {
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS); // Parent exits
+    }
+
+    prctl(PR_SET_NAME, name); // Set /proc/pid/comm name
+    if (argv[0]) { // Overwrite argv[0] for ps/top visibility
+        strncpy(argv[0], name, 4);
+        argv[0][4] = '\0';
     }
 
     // Set file permissions
@@ -94,7 +102,7 @@ static void daemonize_process(int rx_fd, int tx_fd) {
     dup(0); // stderr
 }
 
-void start_service(service_t *svc, void (*entry)(int, int)) {
+void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -115,15 +123,17 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         close(svc->router_to_svc[1]); // Close unused pipes
         close(svc->svc_to_router[0]);
 
-        daemonize_process(svc->router_to_svc[0], svc->svc_to_router[1]);
+        daemonize_process(svc->router_to_svc[0], svc->svc_to_router[1], argv, svc->name);
         
         // Notify router we're ready
-        write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
+        // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
         entry(svc->router_to_svc[0], svc->svc_to_router[1]);
         
+        
         close(svc->router_to_svc[0]); // Close pipes before exit
         close(svc->svc_to_router[1]);
+
 
         exit(EXIT_SUCCESS);
     } 
@@ -131,12 +141,12 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         close(svc->router_to_svc[0]); // Close unused pipes
         close(svc->svc_to_router[1]);
 
-        // Wait for service ready signal
-        char buf[sizeof(SERVICE_READY_MSG)];
-        if (read(svc->svc_to_router[0], buf, sizeof(buf)) > 0) {
+        // Wait for service to return its PID
+        pid_t child_pid;
+        if (read(svc->svc_to_router[0], &child_pid, sizeof(pid_t)) > 0) {
             svc->running = true;
-            svc->pid = pid - 1;     // TODO: Have to figure out why we've to decrement 1 to the assigned pid.'.
-            printf("Service (PID %d) started\n", svc->pid);
+            svc->pid = child_pid;     // TODO: Have to figure out why we've to decrement 1 to the assigned pid.'.
+            printf("Service %s (PID %d) started\n", svc->name, svc->pid);
         }
     }
 }
@@ -152,6 +162,12 @@ void confirm_before_shutdown(){
 }
 
 void sigint_handler(int sig) {
+    if (verbose == 0){
+        confirm_before_shutdown();
+    }
+    else{           // Shutdowns without confirmation while testing.
+        shutdown_requested_flag = 1;
+    }
     if (verbose == 0){
         confirm_before_shutdown();
     }
@@ -193,8 +209,6 @@ void cleanup_services(service_t *services) {
     }
 }
 
-// TODO: This is NOT WORKING
-// Testcase: kill a specific process using <service>:shutdown, and check the running services.
 // This function shows the process as running and the next process as dead.
 bool is_service_running(service_t *svc) {
     print_verboseln("is_service_running pid: %d", svc->pid);
@@ -204,8 +218,7 @@ bool is_service_running(service_t *svc) {
         print_verboseln("Result from kill: %d", result_from_kill);
         return !result_from_kill;
     }
-    else
-        return false;
+    return false;
 }
 
 /* ================= Debug Messages ================= */
@@ -214,10 +227,10 @@ void print_hex_ln(const char *message, unsigned char *data, int length) {
         int i;
         fprintf(stderr, "XXXX %s", message);
         for(i=0; i<length; i++) {
-        if(i%16 == 0) {
-            fprintf(stderr, "\n");
-        }
-        fprintf(stderr, "%02x ", data[i]);
+            if(i%16 == 0) {
+                fprintf(stderr, "\n");
+            }
+            fprintf(stderr, "%02x ", data[i]);
         }
         fprintf(stderr, "\n");
     }
@@ -252,7 +265,6 @@ void print_help(service_t *services){
             fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
         }
     }
-    fprintf(stderr, "\nroot@router# ");
 
 }
 
@@ -264,11 +276,11 @@ void handle_service_response(int service_id, int fd) {
         printf("[Service %d] %.*s\n", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }
+    
 }
 
 void handle_cli_input(service_t *services) {
     char raw_cmd[256];
-    fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
 
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
 
@@ -298,6 +310,7 @@ void handle_cli_input(service_t *services) {
             for (int i = 0; i < NUM_SERVICES; i++) {
                 fprintf(stderr, " - %s\n", SERVICE_NAMES[i]);
             }
+            fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;
         }
 
@@ -307,7 +320,7 @@ void handle_cli_input(service_t *services) {
         if (cmd.service_id >= 0 && cmd.service_id < NUM_SERVICES) {
             if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
-                fprintf(stderr, "Command sent to %s service\n", SERVICE_NAMES[cmd.service_id]);
+                fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
@@ -319,16 +332,20 @@ void handle_cli_input(service_t *services) {
             confirm_before_shutdown();
         } else if (strcmp(raw_cmd, "help") == 0) {
             print_help(services);
+            fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;
         }
         else if (strcmp(raw_cmd, "") == 0){
+            fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;                         // For an empty line or a return when no command is recognized.
         } 
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
             print_help(services);
+            print_help(services);
         }
     }
+    fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
 }
 
 /* ================= Main Application ================= */
@@ -358,12 +375,16 @@ int main(int argc, char *argv[]) {
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {
         void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
-        start_service(&services[i], entries[i]);
+        service_t *service_selected = &services[i];
+        strncpy(service_selected->name, SERVICE_NAMES[i], 4);
+        (service_selected->name)[4] = '\0';
+
+        start_service(service_selected, argv, entries[i]);
     }
     
     fprintf(stderr, "root@router# ");
-
-    // Main event loop
+    
+    // Main event loop        
     while (!shutdown_requested_flag) {
         
         fd_set readfds;
@@ -394,6 +415,7 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < NUM_SERVICES; i++) {
             if (services[i].running && FD_ISSET(services[i].svc_to_router[0], &readfds)) {
                 handle_service_response(i, services[i].svc_to_router[0]);
+                services[i].running = is_service_running(&services[i]);
             }
         }
     }

@@ -23,22 +23,22 @@
 #define BUFFER_SIZE 1518
 #define DEFAULT_IFACE "enp0s8"
 #define IPV4_ETH_TYPE 0x0800
+#define TABLE_SIZE 1024
 
-typedef struct {
-    uint32_t orig_ip;     // Original private IP
-    uint16_t orig_port;   // Original port/ICMP ID
+struct nat_entry{
+    uint32_t orig_ip;     // private IP
+    uint16_t orig_port;   // port/ICMP ID
     uint32_t trans_ip;    // Translated public IP
     uint16_t trans_port;  // Translated port/ICMP ID
     uint8_t protocol;     // TCP (6), UDP (17), ICMP (1)
-} nat_entry;
+};
 
 // Hash table structure (chaining for collisions)
 typedef struct hash_node {
-    nat_entry entry;
+    struct nat_entry entry;
     struct hash_node* next;
 } hash_node;
 
-#define TABLE_SIZE 1024
 hash_node* nat_table[TABLE_SIZE];
 
 static nat_entry translation_table[MAX_ENTRIES];
@@ -152,21 +152,30 @@ void handle_packet(unsigned char *buffer, ssize_t len) {
 
     if(&ip_header->version != 4) return;                   // Anything other than IPv4 SHALL NOT PASS!
 
+    // Copy src address and dsr address.
+    uint16_t sport, dport;
+    uint32_t src_ip = ip_header->saddr;
+    uint32_t dst_ip = ip_header->daddr;
+
+    struct nat_entry packet_details;
+
+    packet_details.orig_ip = src_ip;
+    packet_details.orig_port = sport;
+
     switch (&ip_header->protocol){
         case 1:
         // ICMP
             break;
-        case 2:
-        // IGMP
-            break;
         case 6:
+            const struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
+            
+            sport = ntohs(tcp->sport);
+            dport = ntohs(tcp->dport);
+
         // TCP
             break;
         case 17:
         // UDP
-            break;
-        case 89:
-        // OSPF
             break;
         default:
         // Unsupported protocol
@@ -174,7 +183,6 @@ void handle_packet(unsigned char *buffer, ssize_t len) {
     }
 
     uint8_t *transport = extract_tcp(ip);
-    uint16_t sport, dport;
     uint8_t proto = ip->protocol;
 
     if(proto == 6) {  // TCP
@@ -238,6 +246,10 @@ void nat_main(int router_rx, int router_tx) {
     struct sockaddr_ll saddr;
     struct ifreq ifr;
     unsigned char buffer[BUFFER_SIZE];
+
+    // Send the PID to router process for "killing" purposes.
+    pid_t pid = getpid();
+    write(tx_fd, &pid, sizeof(pid_t));
     
     // Socket setup
     if((raw_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) < 0) {
