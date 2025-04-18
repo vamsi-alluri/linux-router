@@ -25,7 +25,7 @@
 
 int verbose = 0;
 char *progname;
-const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "napt", "_dns", "_ntp"};
+const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "nat", "dns", "ntp"};
 volatile sig_atomic_t shutdown_requested_flag = 0;
 
 typedef struct {
@@ -41,6 +41,7 @@ typedef struct {
     char command[256];
 } router_command;
 
+void print_verboseln(char *message, ...);
 void print_verboseln(char *message, ...);
 
 /* ================= Process Creation ================= */
@@ -130,8 +131,10 @@ void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
         
         entry(svc->router_to_svc[0], svc->svc_to_router[1]);
         
+        
         close(svc->router_to_svc[0]); // Close pipes before exit
         close(svc->svc_to_router[1]);
+
 
         exit(EXIT_SUCCESS);
     } 
@@ -161,6 +164,12 @@ void confirm_before_shutdown(){
 }
 
 void sigint_handler(int sig) {
+    if (verbose == 0){
+        confirm_before_shutdown();
+    }
+    else{           // Shutdowns without confirmation while testing.
+        shutdown_requested_flag = 1;
+    }
     if (verbose == 0){
         confirm_before_shutdown();
     }
@@ -213,8 +222,6 @@ bool is_service_running(service_t *svc) {
         print_verboseln("Result from kill: %d", result_from_kill);
         return !result_from_kill;
     }
-    else
-        return false;
 }
 
 /* ================= Debug Messages ================= */
@@ -223,15 +230,13 @@ void print_hex_ln(const char *message, unsigned char *data, int length) {
         int i;
         fprintf(stderr, "XXXX %s", message);
         for(i=0; i<length; i++) {
-        if(i%16 == 0) {
-            fprintf(stderr, "\n");
-        }
-        fprintf(stderr, "%02x ", data[i]);
+            if(i%16 == 0) {
+                fprintf(stderr, "\n");
+            }
+            fprintf(stderr, "%02x ", data[i]);
         }
         fprintf(stderr, "\n");
     }
-    else
-        return false;
 }
 
 // Prints anything you pass into stderr for faster flushing.
@@ -291,6 +296,7 @@ void handle_cli_input(service_t *services) {
     
     if (delim) {
         // Delimiter present: Direct command to specific service.
+        // Delimiter present: Direct command to specific service.
         *delim = '\0';
         char *service_name = raw_cmd;
         char *command = delim + 1;
@@ -341,12 +347,33 @@ void handle_cli_input(service_t *services) {
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
             print_help(services);
+            print_help(services);
         }
     }
     fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
 }
 
 /* ================= Main Application ================= */
+// int main(int argc, char *argv[]) {
+//     progname = argv[0];
+    
+//     int option;
+
+//     if (argc > 1){    
+//         fprintf(stderr, "Got more arguments %s\n", argv[1]);
+//         while((option = getopt(argc, argv, "v")) != -1){
+//             switch(option) {
+//                 case 'v':
+//                     verbose = 1;
+//                     print_verboseln("Verbose mode enabled.");
+//                     break;
+//                 default:
+//                     fprintf(stderr, "Default option.\n");
+//                     break;
+//             }
+//         }
+//     }
+
 int main(int argc, char *argv[]) {
     progname = argv[0];
     
@@ -381,8 +408,8 @@ int main(int argc, char *argv[]) {
     }
     
     fprintf(stderr, "root@router# ");
-
-    // Main event loop
+    
+    // Main event loop        
     while (!shutdown_requested_flag) {
         
         fd_set readfds;
