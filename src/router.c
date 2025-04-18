@@ -141,10 +141,11 @@ void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
 
         // Wait for service ready signal
         char buf[sizeof(SERVICE_READY_MSG)];
-        if (read(svc->svc_to_router[0], buf, sizeof(buf)) > 0) {
+        pid_t child_pid;
+        if (read(svc->svc_to_router[0], &child_pid, sizeof(pid_t)) > 0) {
             svc->running = true;
-            svc->pid = pid - 1;     // TODO: Have to figure out why we've to decrement 1 to the assigned pid.'.
-            printf("Service (PID %d) started\n", svc->pid);
+            svc->pid = child_pid;     // TODO: Have to figure out why we've to decrement 1 to the assigned pid.'.
+            printf("Service %s (PID %d) started\n", svc->name, svc->pid);
         }
     }
 }
@@ -262,7 +263,7 @@ void print_help(service_t *services){
             fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
         }
     }
-    fprintf(stderr, "\nroot@router# ");
+    //fprintf(stderr, "\nroot@router# ");
 
 }
 
@@ -274,11 +275,11 @@ void handle_service_response(int service_id, int fd) {
         printf("[Service %d] %.*s\n", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }
+    
 }
 
 void handle_cli_input(service_t *services) {
     char raw_cmd[256];
-    fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
 
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
 
@@ -308,6 +309,7 @@ void handle_cli_input(service_t *services) {
             for (int i = 0; i < NUM_SERVICES; i++) {
                 fprintf(stderr, " - %s\n", SERVICE_NAMES[i]);
             }
+            fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;
         }
 
@@ -317,7 +319,7 @@ void handle_cli_input(service_t *services) {
         if (cmd.service_id >= 0 && cmd.service_id < NUM_SERVICES) {
             if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
-                fprintf(stderr, "Command sent to %s service\n", SERVICE_NAMES[cmd.service_id]);
+                fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
@@ -329,9 +331,11 @@ void handle_cli_input(service_t *services) {
             confirm_before_shutdown();
         } else if (strcmp(raw_cmd, "help") == 0) {
             print_help(services);
+            fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;
         }
         else if (strcmp(raw_cmd, "") == 0){
+            fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;                         // For an empty line or a return when no command is recognized.
         } 
         else {
@@ -339,6 +343,7 @@ void handle_cli_input(service_t *services) {
             print_help(services);
         }
     }
+    fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
 }
 
 /* ================= Main Application ================= */
@@ -408,6 +413,7 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < NUM_SERVICES; i++) {
             if (services[i].running && FD_ISSET(services[i].svc_to_router[0], &readfds)) {
                 handle_service_response(i, services[i].svc_to_router[0]);
+                services[i].running = is_service_running(&services[i]);
             }
         }
     }
