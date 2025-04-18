@@ -10,9 +10,13 @@
 #include <arpa/inet.h>
 
 #define NTP_TIMESTAMP_DELTA 2208988800ull // Difference between UNIX and NTP start time
-#define NTPD_PORT 123
+#define NTPD_PORT 123                     // Well-known port
 
 void ntp_main(int rx_fd, int tx_fd){
+    // Send the PID back to the parent for processing
+    pid_t pid = getpid();
+    write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
+
     struct sockaddr_in ser_addr, cli_addr;
     int flags, s, slen = sizeof(cli_addr), recv_len, send_len, select_ret;
 
