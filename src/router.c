@@ -42,7 +42,6 @@ typedef struct {
 } router_command;
 
 void print_verboseln(char *message, ...);
-void print_verboseln(char *message, ...);
 
 /* ================= Process Creation ================= */
 static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
@@ -142,8 +141,7 @@ void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
         close(svc->router_to_svc[0]); // Close unused pipes
         close(svc->svc_to_router[1]);
 
-        // Wait for service ready signal
-        char buf[sizeof(SERVICE_READY_MSG)];
+        // Wait for service to return its PID
         pid_t child_pid;
         if (read(svc->svc_to_router[0], &child_pid, sizeof(pid_t)) > 0) {
             svc->running = true;
@@ -211,8 +209,6 @@ void cleanup_services(service_t *services) {
     }
 }
 
-// TODO: This is NOT WORKING
-// Testcase: kill a specific process using <service>:shutdown, and check the running services.
 // This function shows the process as running and the next process as dead.
 bool is_service_running(service_t *svc) {
     print_verboseln("is_service_running pid: %d", svc->pid);
@@ -222,6 +218,7 @@ bool is_service_running(service_t *svc) {
         print_verboseln("Result from kill: %d", result_from_kill);
         return !result_from_kill;
     }
+    return false;
 }
 
 /* ================= Debug Messages ================= */
@@ -268,7 +265,6 @@ void print_help(service_t *services){
             fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
         }
     }
-    //fprintf(stderr, "\nroot@router# ");
 
 }
 
@@ -295,7 +291,6 @@ void handle_cli_input(service_t *services) {
     char *delim = strchr(raw_cmd, ':');
     
     if (delim) {
-        // Delimiter present: Direct command to specific service.
         // Delimiter present: Direct command to specific service.
         *delim = '\0';
         char *service_name = raw_cmd;
@@ -354,26 +349,6 @@ void handle_cli_input(service_t *services) {
 }
 
 /* ================= Main Application ================= */
-// int main(int argc, char *argv[]) {
-//     progname = argv[0];
-    
-//     int option;
-
-//     if (argc > 1){    
-//         fprintf(stderr, "Got more arguments %s\n", argv[1]);
-//         while((option = getopt(argc, argv, "v")) != -1){
-//             switch(option) {
-//                 case 'v':
-//                     verbose = 1;
-//                     print_verboseln("Verbose mode enabled.");
-//                     break;
-//                 default:
-//                     fprintf(stderr, "Default option.\n");
-//                     break;
-//             }
-//         }
-//     }
-
 int main(int argc, char *argv[]) {
     progname = argv[0];
     
