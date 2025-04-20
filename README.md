@@ -27,3 +27,5 @@ Questions on exception handling:
 
 ## Notes from development:
 Due to the main router function requirements, the main function of each service exlcuding the router main function must write its pid back to the router main function, so as to both update the router main function that the service has started and to get its pid for accurate shutdown.
+
+If you are planning to add a router specific command that is not in relation to a service, make sure you add it to the help print.

@@ -255,7 +255,7 @@ void print_help(service_t *services)
     fprintf(stderr, "      <service>:shutdown   - Shutdown the specific service\n");
     fprintf(stderr, "  help                - Show this help\n");
     fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
-    fprintf(stderr, "  service_status      - Print what services are running.\n");
+    fprintf(stderr, "  services            - Print what services are running.\n");
 }
 
 void print_running_services(service_t *services)
@@ -357,7 +357,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
             fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;                         // For an empty line or a return when no command is recognized.
         } 
-        else if (strcmp(raw_cmd, "service_status") == 0) {
+        else if (strcmp(raw_cmd, "services") == 0) {
             // Print what services are running
             print_running_services(services);
             fprintf(stderr, "root@router# "); 
