@@ -153,7 +153,7 @@ void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
 
 /* ================= Signal Handling & Cleanup ================= */
 void confirm_before_shutdown(){
-    fprintf(stderr, "\n!!!CAUTION!!!\nShuts down all services.\n\nAre you sure? (y):");
+    fprintf(stderr, "\n!!!CAUTION!!!\nShuts down all services.\n\nAre you sure? (y): ");
     char test_y_n = getchar();
     if ('y' == test_y_n || 'Y' == test_y_n){
         shutdown_requested_flag = 1;
@@ -165,13 +165,7 @@ void sigint_handler(int sig) {
     if (verbose == 0){
         confirm_before_shutdown();
     }
-    else{           // Shutdowns without confirmation while testing.
-        shutdown_requested_flag = 1;
-    }
-    if (verbose == 0){
-        confirm_before_shutdown();
-    }
-    else{           // Shutdowns without confirmation while testing.
+    else{           // Shutdowns without confirmation while testing. TODO: Remove this after development.
         shutdown_requested_flag = 1;
     }
 }
@@ -273,7 +267,9 @@ void handle_service_response(int service_id, int fd) {
     char buffer[256];
     ssize_t count = read(fd, buffer, sizeof(buffer));
     if (count > 0) {
-        printf("[Service %d] %.*s\n", service_id, (int)count, buffer);
+        
+        fprintf(stderr, "\33[2K\r");
+        printf("[Service %d] %.*s", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }
     
@@ -378,7 +374,7 @@ int main(int argc, char *argv[]) {
         service_t *service_selected = &services[i];
         strncpy(service_selected->name, SERVICE_NAMES[i], 4);
         (service_selected->name)[4] = '\0';
-
+        
         start_service(service_selected, argv, entries[i]);
     }
     
