@@ -1,5 +1,5 @@
-#ifndef HELPER_H
-#define HELPER_H
+#ifndef PACKET_HELPER_H
+#define PACKET_HELPER_H
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -13,7 +13,7 @@ struct ethernet_header {
 
 struct raw_ethernet_frame {
     struct ethernet_header header;           // 14 bytes
-    uint8_t payload[1500];              // Max MTU
+    uint8_t payload;              // Max MTU
     uint32_t frame_check_sequence;      // 4 bytes. It uses CRC to calculate the checksum. Check whether FCS is received at layer 2. 
 };
 
@@ -78,7 +78,7 @@ struct udp_header {
 #pragma pack(pop)
 
 // Function prototypes NEW
-const struct raw_ethernet_frame* extract_ethernet_frame(const uint8_t* network_buffer)
+const struct raw_ethernet_frame* extract_ethernet_frame(const uint8_t* network_buffer);
 const struct ethernet_header* extract_ethernet_header_from_frame(const struct raw_ethernet_frame* frame);
 const struct ipv4_packet* extract_ipv4_packet_from_eth_payload(const uint8_t* eth_payload);
 const struct ipv4_header* extract_ipv4_header_from_ipv4_packet(const struct ipv4_packet* packet);
@@ -102,4 +102,4 @@ void update_tcp_ports(struct ipv4_header* ip, struct tcp_header* tcp, uint16_t n
 void update_udp_ports(struct ipv4_header* ip, struct udp_header* udp, uint16_t new_src, uint16_t new_dst, const uint8_t* payload, size_t payload_len);
 
 
-#endif /* HELPER_H */
+#endif /* PACKET_HELPER_h */

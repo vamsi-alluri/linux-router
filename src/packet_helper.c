@@ -2,7 +2,7 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <string.h>
-#include "helper.h"
+#include "packet_helper.h"
 
 
 // transforms raw data to eth frame.
@@ -27,7 +27,7 @@ const struct ipv4_packet* extract_ipv4_packet_from_eth_frame(const uint8_t* raw_
 }
 
 // ethernet payload -> IPV4 packet
-const struct ipv4_packet* extract_ipv4_packet_from_eth_payload(uint8_t* payload_from_frame) {
+const struct ipv4_packet* extract_ipv4_packet_from_eth_payload(const uint8_t* payload_from_frame) {
     return (const struct ipv4_packet*)payload_from_frame;
 }
 
@@ -64,32 +64,6 @@ const struct udp_header* extract_udp_header_from_ethernet_frame(const uint8_t* f
     const struct ipv4_packet* ip_pkt = extract_ipv4_packet_from_eth_payload(eth_frame->payload);
     return extract_udp_header_from_ipv4_packet(ip_pkt);
 }
-
-
-void reassemble_ethernet(const struct raw_ethernet_frame frame, const struct ethernet_header* eth, 
-							 const struct ipv4_header* ip, const struct tcp_header* transport_header, 
-							 const uint8_t* payload, size_t payload_len)
-{
-    memcpy(frame, eth, sizeof(struct ethernet_header));
-    uint8_t* ip_start = frame + sizeof(struct ethernet_header);
-    memcpy(ip_start, ip, ip->ihl * 4);
-
-    uint8_t* transport_start = ip_start + (ip->ihl * 4);
-    size_t transport_len;
-    if (ip->protocol == IPPROTO_TCP) {
-        struct tcp_header* tcp = (struct tcp_header*)transport_header;
-        transport_len = tcp->doff * 4;
-    } 
-    else if (ip->protocol == IPPROTO_UDP) {
-        transport_len = sizeof(struct udp_header);
-    } 
-    else    // Handle other protocols or error cases
-        return;
-
-    memcpy(transport_start, transport_header, transport_len);
-    memcpy(transport_start + transport_len, payload, payload_len);
-}
-
 
 uint16_t compute_checksum(const void* data, size_t len) {
     const uint16_t* buf = data;

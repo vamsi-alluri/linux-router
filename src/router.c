@@ -145,7 +145,7 @@ void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
         pid_t child_pid;
         if (read(svc->svc_to_router[0], &child_pid, sizeof(pid_t)) > 0) {
             svc->running = true;
-            svc->pid = child_pid;     // TODO: Have to figure out why we've to decrement 1 to the assigned pid.'.
+            svc->pid = child_pid;
             printf("Service %s (PID %d) started\n", svc->name, svc->pid);
         }
     }
