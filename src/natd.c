@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <linux/if_packet.h>
+#include <arpa/inet.h>          // For address conversion.
 
 #include <netinet/ether.h>
 #include <netinet/ip.h>
@@ -136,8 +137,8 @@ What all should NAT do for each packet?
 - Track TCP connections, TCP SYN, TCP FIN, TCP FIN ACK.
 - Get DHCP Table and store it in memory.
 - Implement memory clean up once in every TODO.
-
 */
+
 void handle_packet(unsigned char *buffer, ssize_t len) {
 
     // Get ethernet frame and header.
