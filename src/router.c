@@ -34,6 +34,7 @@ typedef struct {
     int svc_to_router[2];
     bool running;
     char name[5];
+    void (* main_func)(int, int);
 } service_t;
 
 typedef struct {
@@ -102,7 +103,8 @@ static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *na
     dup(0); // stderr
 }
 
-void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
+void start_service(service_t *svc, char *argv[]) {
+    void (*entry)(int, int) = svc->main_func;
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -275,7 +277,7 @@ void handle_service_response(int service_id, int fd) {
     
 }
 
-void handle_cli_input(service_t *services) {
+void handle_cli_input(service_t *services, char * argv[]) {
     char raw_cmd[256];
 
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
@@ -314,7 +316,13 @@ void handle_cli_input(service_t *services) {
         strncpy(cmd.command, command, sizeof(cmd.command)-1);
 
         if (cmd.service_id >= 0 && cmd.service_id < NUM_SERVICES) {
-            if (services[cmd.service_id].running) {
+            if (strcmp(cmd.command, "start") == 0) {
+                if (services[cmd.service_id].running) {
+                    fprintf(stderr, "Error: %s service is already running\n", SERVICE_NAMES[cmd.service_id]);
+                } else {
+                    start_service(&services[cmd.service_id], argv);
+                }
+            } else if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
                 fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
@@ -365,17 +373,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
+    void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
 
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {
-        void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
         service_t *service_selected = &services[i];
         strncpy(service_selected->name, SERVICE_NAMES[i], 4);
         (service_selected->name)[4] = '\0';
-        
-        start_service(service_selected, argv, entries[i]);
+        service_selected->main_func = entries[i];
+        start_service(service_selected, argv);
     }
     
     fprintf(stderr, "root@router# ");
@@ -405,7 +414,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
-            handle_cli_input(services);
+            handle_cli_input(services, argv);
         }
 
         for (int i = 0; i < NUM_SERVICES; i++) {
