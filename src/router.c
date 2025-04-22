@@ -34,6 +34,7 @@ typedef struct {
     int svc_to_router[2];
     bool running;
     char name[5];
+    void (* main_func)(int, int);
 } service_t;
 
 typedef struct {
@@ -42,6 +43,7 @@ typedef struct {
 } router_command;
 
 void print_verboseln(char *message, ...);
+void print_running_services(service_t *services);
 
 /* ================= Process Creation ================= */
 static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
@@ -102,7 +104,8 @@ static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *na
     dup(0); // stderr
 }
 
-void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
+void start_service(service_t *svc, char *argv[]) {
+    void (*entry)(int, int) = svc->main_func;
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -243,23 +246,35 @@ void print_verboseln(char *message, ...){
     }
 }
 
-void print_help(service_t *services){
+
+void print_help(service_t *services)
+{
     fprintf(stderr, "Available commands:\n");
     fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
+    fprintf(stderr, "      <service>:start      - Start the specific service\n");
+    fprintf(stderr, "      <service>:shutdown   - Shutdown the specific service\n");
     fprintf(stderr, "  help                - Show this help\n");
     fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
-    fprintf(stderr, "Available services:\n");
-    if (verbose == 1){
-        for (int i = 0; i < NUM_SERVICES; i++) {
-            fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
-        }
-    }
-    else{
-        for (int i = 0; i < NUM_SERVICES; i++) {
-            fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
-        }
-    }
+    fprintf(stderr, "  services            - Print what services are running.\n");
+}
 
+void print_running_services(service_t *services)
+{
+    fprintf(stderr, "Available services:\n");
+    if (verbose == 1)
+    {
+        for (int i = 0; i < NUM_SERVICES; i++)
+        {
+            fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
+        }
+    }
+    else
+    {
+        for (int i = 0; i < NUM_SERVICES; i++)
+        {
+            fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
+        }
+    }
 }
 
 /* ================= Command Handling ================= */
@@ -275,7 +290,7 @@ void handle_service_response(int service_id, int fd) {
     
 }
 
-void handle_cli_input(service_t *services) {
+void handle_cli_input(service_t *services, char * argv[]) {
     char raw_cmd[256];
 
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
@@ -314,7 +329,13 @@ void handle_cli_input(service_t *services) {
         strncpy(cmd.command, command, sizeof(cmd.command)-1);
 
         if (cmd.service_id >= 0 && cmd.service_id < NUM_SERVICES) {
-            if (services[cmd.service_id].running) {
+            if (strcmp(cmd.command, "start") == 0) {
+                if (services[cmd.service_id].running) {
+                    fprintf(stderr, "Error: %s service is already running\n", SERVICE_NAMES[cmd.service_id]);
+                } else {
+                    start_service(&services[cmd.service_id], argv);
+                }
+            } else if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
                 fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
@@ -326,18 +347,24 @@ void handle_cli_input(service_t *services) {
         // Commands to router: Handle all the commands locally.
         if (strcmp(raw_cmd, "q") == 0) {
             confirm_before_shutdown();
-        } else if (strcmp(raw_cmd, "help") == 0) {
+        } 
+        else if (strcmp(raw_cmd, "help") == 0) {
             print_help(services);
             fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;
-        }
+        } 
         else if (strcmp(raw_cmd, "") == 0){
             fprintf(stderr, "root@router# ");       // This is printed after waiting for input.
             return;                         // For an empty line or a return when no command is recognized.
         } 
+        else if (strcmp(raw_cmd, "services") == 0) {
+            // Print what services are running
+            print_running_services(services);
+            fprintf(stderr, "root@router# "); 
+            return;
+        }
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
-            print_help(services);
             print_help(services);
         }
     }
@@ -365,17 +392,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
+    void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
 
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {
-        void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
         service_t *service_selected = &services[i];
         strncpy(service_selected->name, SERVICE_NAMES[i], 4);
         (service_selected->name)[4] = '\0';
-        
-        start_service(service_selected, argv, entries[i]);
+        service_selected->main_func = entries[i];
+        start_service(service_selected, argv);
     }
     
     fprintf(stderr, "root@router# ");
@@ -405,7 +433,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
-            handle_cli_input(services);
+            handle_cli_input(services, argv);
         }
 
         for (int i = 0; i < NUM_SERVICES; i++) {
