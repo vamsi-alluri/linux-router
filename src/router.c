@@ -258,6 +258,14 @@ void handle_service_response(int service_id, int fd) {
     char buffer[256];
     ssize_t count = read(fd, buffer, sizeof(buffer));
     if (count > 0) {
+        // Check if the service is DHCP (ID 0) and if verbose mode is off
+        const char *dhcp_debug_prefix = "DHCP_DBG: ";
+        if (service_id == 0 && verbose == 0 && 
+            strncmp(buffer, dhcp_debug_prefix, strlen(dhcp_debug_prefix)) == 0) { 
+            // Don't print prefixed DHCP debug messages unless verbose is enabled;
+            return;
+        }
+        // Print output for other services or if verbose mode is on
         printf("[Service %d] %.*s", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }

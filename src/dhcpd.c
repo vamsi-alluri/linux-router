@@ -140,7 +140,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
         exit(EXIT_FAILURE);
     }
     
-    write(tx_fd, "DHCP: Server initialized and ready with raw socket support\n", 58);
+    write(tx_fd, "DHCP_DBG: Server initialized and ready with raw socket support\n", 68);
     
     fd_set readfds;
     struct timeval timeout;
@@ -181,7 +181,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
             
             // Process router command
             if (strcmp(buffer, "shutdown") == 0) {
-                write(tx_fd, "DHCP: Shutting down\n", 20);
+                write(tx_fd, "DHCP_DBG: Shutting down\n", 24);
                 server_running = 0;
                 break;
             } 
@@ -212,9 +212,9 @@ void dhcp_main(int rx_fd, int tx_fd) {
                 unsigned char client_mac[6];
                 // only valid DISCOVER/REQUEST
                 if (parse_dhcp_packet(frame, recv_len, &packet, client_mac)) {
-                    char client_info[100];
+                    char client_info[120];
                     snprintf(client_info, sizeof(client_info),
-                             "DHCP: Received raw packet from MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                             "DHCP_DBG: Received raw packet from MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
                              client_mac[0], client_mac[1], client_mac[2],
                              client_mac[3], client_mac[4], client_mac[5]);
                     write(tx_fd, client_info, strlen(client_info));
@@ -227,7 +227,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
                         
                         thread_arg_t *thread_arg = malloc(sizeof(thread_arg_t));
                         if (!thread_arg) {
-                            write(tx_fd, "DHCP: Failed to allocate memory for thread\n", 43);
+                            write(tx_fd, "DHCP_DBG: Failed to allocate memory for thread\n", 47);
                             pthread_mutex_lock(&thread_count_mutex);
                             thread_count--;
                             pthread_mutex_unlock(&thread_count_mutex);
@@ -244,7 +244,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
 
                         pthread_t thread_id;
                         if (pthread_create(&thread_id, NULL, handle_dhcp_request, thread_arg) != 0) {
-                            write(tx_fd, "DHCP: Failed to create thread\n", 30);
+                            write(tx_fd, "DHCP_DBG: Failed to create thread\n", 34);
                             free(thread_arg);
                             pthread_mutex_lock(&thread_count_mutex);
                             thread_count--;
@@ -253,7 +253,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
                             pthread_detach(thread_id);
                         }
                     } else {
-                        write(tx_fd, "DHCP: Maximum threads reached, dropping request\n", 48);
+                        write(tx_fd, "DHCP_DBG: Maximum threads reached, dropping request\n", 52);
                     }
                 }
             }
@@ -269,9 +269,9 @@ void dhcp_main(int rx_fd, int tx_fd) {
                              (struct sockaddr*)&client_addr, &addr_len);
                              
             if (recv_len > 0) {
-                char client_info[100];
+                char client_info[120];
                 snprintf(client_info, sizeof(client_info), 
-                         "DHCP: Received packet from %s:%d\n", 
+                         "DHCP_DBG: Received packet from %s:%d\n", 
                          inet_ntoa(client_addr.sin_addr), 
                          ntohs(client_addr.sin_port));
                 write(tx_fd, client_info, strlen(client_info));
@@ -284,7 +284,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
                     
                     thread_arg_t *thread_arg = malloc(sizeof(thread_arg_t));
                     if (!thread_arg) {
-                        write(tx_fd, "DHCP: Failed to allocate memory for thread\n", 43);
+                        write(tx_fd, "DHCP_DBG: Failed to allocate memory for thread\n", 47);
                         pthread_mutex_lock(&thread_count_mutex);
                         thread_count--;
                         pthread_mutex_unlock(&thread_count_mutex);
@@ -300,7 +300,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
 
                     pthread_t thread_id;
                     if (pthread_create(&thread_id, NULL, handle_dhcp_request, thread_arg) != 0) {
-                        write(tx_fd, "DHCP: Failed to create thread\n", 30);
+                        write(tx_fd, "DHCP_DBG: Failed to create thread\n", 34);
                         free(thread_arg);
                         pthread_mutex_lock(&thread_count_mutex);
                         thread_count--;
@@ -309,7 +309,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
                         pthread_detach(thread_id);
                     }
                 } else {
-                    write(tx_fd, "DHCP: Maximum threads reached, dropping request\n", 48);
+                    write(tx_fd, "DHCP_DBG: Maximum threads reached, dropping request\n", 52);
                 }
             }
         }
@@ -321,7 +321,7 @@ void dhcp_main(int rx_fd, int tx_fd) {
     pthread_mutex_destroy(&lease_mutex);
     pthread_mutex_destroy(&thread_count_mutex);
     
-    write(tx_fd, "DHCP: Service terminated\n", 25);
+    write(tx_fd, "DHCP_DBG: Service terminated\n", 29);
     close(rx_fd);
     close(tx_fd);
     exit(EXIT_SUCCESS);
@@ -492,19 +492,19 @@ void *handle_dhcp_request(void *arg) {
     int use_raw = thread_arg->use_raw;
     int tx_fd = thread_arg->tx_fd;
     unsigned char client_mac[6];
-    char log_buffer[256];
+    char log_buffer[280];
 
     if (use_raw) {
         memcpy(client_mac, thread_arg->client_mac, 6);
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] Handling raw request from MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+                 "DHCP_DBG: [Thread %lu] Handling raw request from MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
                  pthread_self(),
                  client_mac[0], client_mac[1], client_mac[2],
                  client_mac[3], client_mac[4], client_mac[5]);
         write(tx_fd, log_buffer, strlen(log_buffer));
     } else {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] Handling request from %s, port number:%d\n",
+                 "DHCP_DBG: [Thread %lu] Handling request from %s, port number:%d\n",
                  pthread_self(), inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
         write(tx_fd, log_buffer, strlen(log_buffer));
     }
@@ -515,7 +515,7 @@ void *handle_dhcp_request(void *arg) {
     magic_cookie = ntohl(magic_cookie);
     if (magic_cookie != DHCP_MAGIC_COOKIE) {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] Invalid DHCP packet (wrong magic cookie)\n", pthread_self());
+                 "DHCP_DBG: [Thread %lu] Invalid DHCP packet (wrong magic cookie)\n", pthread_self());
         write(tx_fd, log_buffer, strlen(log_buffer));
         free(thread_arg);
         pthread_exit(NULL);
@@ -527,7 +527,7 @@ void *handle_dhcp_request(void *arg) {
                                                  DHCP_OPTION_MESSAGE_TYPE, &opt_len);
     if (!msg_type_opt || opt_len != 1) {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] Invalid DHCP packet (no message type)\n", pthread_self());
+                 "DHCP_DBG: [Thread %lu] Invalid DHCP packet (no message type)\n", pthread_self());
         write(tx_fd, log_buffer, strlen(log_buffer));
         free(thread_arg);
         pthread_exit(NULL);
@@ -538,12 +538,12 @@ void *handle_dhcp_request(void *arg) {
     case DHCPDISCOVER:
     {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] DHCP DISCOVER received from client\n", pthread_self());
+                 "DHCP_DBG: [Thread %lu] DHCP DISCOVER received from client\n", pthread_self());
         write(tx_fd, log_buffer, strlen(log_buffer));
         uint32_t new_ip = allocate_ip(use_raw ? client_mac : packet.chaddr, 3600);
         if (!new_ip) {
             snprintf(log_buffer, sizeof(log_buffer),
-                     "[Thread %lu] No more IP addresses available\n", pthread_self());
+                     "DHCP_DBG: [Thread %lu] No more IP addresses available\n", pthread_self());
             write(tx_fd, log_buffer, strlen(log_buffer));
             free(thread_arg);
             pthread_exit(NULL);
@@ -560,7 +560,7 @@ void *handle_dhcp_request(void *arg) {
         offer.options[offset++] = DHCP_OPTION_END;
 
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] Sending DHCP OFFER to client with IP: %s\n",
+                 "DHCP_DBG: [Thread %lu] Sending DHCP OFFER to client with IP: %s\n",
                  pthread_self(), inet_ntoa(*(struct in_addr *)&new_ip));
         write(tx_fd, log_buffer, strlen(log_buffer));
 
@@ -577,7 +577,7 @@ void *handle_dhcp_request(void *arg) {
             socklen_t dest_len = sizeof(dest_addr);
 
             if (sendto(s, &offer, sizeof(offer), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
-                snprintf(log_buffer, sizeof(log_buffer), "sendto() OFFER UDP failed: %s\n", strerror(errno));
+                snprintf(log_buffer, sizeof(log_buffer), "DHCP_DBG: sendto() OFFER UDP failed: %s\n", strerror(errno));
                 write(tx_fd, log_buffer, strlen(log_buffer));
             }
         }
@@ -586,7 +586,7 @@ void *handle_dhcp_request(void *arg) {
     case DHCPREQUEST:
     {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] DHCP REQUEST received from client\n", pthread_self());
+                 "DHCP_DBG: [Thread %lu] DHCP REQUEST received from client\n", pthread_self());
         write(tx_fd, log_buffer, strlen(log_buffer));
         size_t opt_len;
         const uint8_t *req_ip_opt = get_dhcp_option(packet.options + 4, sizeof(packet.options) - 4,
@@ -618,7 +618,7 @@ void *handle_dhcp_request(void *arg) {
             int offset = create_dhcp_packet(&ack, DHCPACK, packet.xid, 0, req_ip,
                                          use_raw ? client_mac : packet.chaddr);
             snprintf(log_buffer, sizeof(log_buffer),
-                     "[Thread %lu] Sending DHCP ACK to client for IP: %s\n",
+                     "DHCP_DBG: [Thread %lu] Sending DHCP ACK to client for IP: %s\n",
                      pthread_self(), inet_ntoa(*(struct in_addr *)&req_ip));
             write(tx_fd, log_buffer, strlen(log_buffer));
             uint32_t lease_time = htonl(3600);
@@ -649,7 +649,7 @@ void *handle_dhcp_request(void *arg) {
                 }
 
                 if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
-                    snprintf(log_buffer, sizeof(log_buffer), "sendto() ACK UDP failed: %s\n", strerror(errno));
+                    snprintf(log_buffer, sizeof(log_buffer), "DHCP_DBG: sendto() ACK UDP failed: %s\n", strerror(errno));
                     write(tx_fd, log_buffer, strlen(log_buffer));
                 }
             }
@@ -657,7 +657,7 @@ void *handle_dhcp_request(void *arg) {
             int offset = create_dhcp_packet(&ack, DHCPNAK, packet.xid, 0, 0,
                                          use_raw ? client_mac : packet.chaddr);
             snprintf(log_buffer, sizeof(log_buffer),
-                     "[Thread %lu] Sending DHCP NAK to client\n", pthread_self());
+                     "DHCP_DBG: [Thread %lu] Sending DHCP NAK to client\n", pthread_self());
             write(tx_fd, log_buffer, strlen(log_buffer));
             ack.options[offset++] = DHCP_OPTION_END;
             
@@ -673,7 +673,7 @@ void *handle_dhcp_request(void *arg) {
                 socklen_t dest_len = sizeof(dest_addr);
 
                 if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
-                    snprintf(log_buffer, sizeof(log_buffer), "sendto() NAK UDP failed: %s\n", strerror(errno));
+                    snprintf(log_buffer, sizeof(log_buffer), "DHCP_DBG: sendto() NAK UDP failed: %s\n", strerror(errno));
                     write(tx_fd, log_buffer, strlen(log_buffer));
                 }
             }
@@ -683,7 +683,7 @@ void *handle_dhcp_request(void *arg) {
     case DHCPRELEASE:
     {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] DHCP RELEASE received from client\n", pthread_self());
+                 "DHCP_DBG: [Thread %lu] DHCP RELEASE received from client\n", pthread_self());
         write(tx_fd, log_buffer, strlen(log_buffer));
         pthread_mutex_lock(&lease_mutex);
         for (int i = 0; i < MAX_LEASES; i++) {
@@ -691,7 +691,7 @@ void *handle_dhcp_request(void *arg) {
                 memcmp(leases[i].mac, use_raw ? client_mac : packet.chaddr, 6) == 0) {
                 leases[i].active = 0;
                 snprintf(log_buffer, sizeof(log_buffer),
-                         "[Thread %lu] Released IP: %s\n",
+                         "DHCP_DBG: [Thread %lu] Released IP: %s\n",
                          pthread_self(), inet_ntoa(*(struct in_addr *)&leases[i].ip));
                 write(tx_fd, log_buffer, strlen(log_buffer));
                 break;
@@ -702,7 +702,7 @@ void *handle_dhcp_request(void *arg) {
     }
     default:
         snprintf(log_buffer, sizeof(log_buffer),
-                 "[Thread %lu] Unsupported DHCP message type: %d\n", pthread_self(), msg_type);
+                 "DHCP_DBG: [Thread %lu] Unsupported DHCP message type: %d\n", pthread_self(), msg_type);
         write(tx_fd, log_buffer, strlen(log_buffer));
     }
 
@@ -814,7 +814,7 @@ void send_dhcp_raw(int raw_sock,
     
     uint8_t buf[MAX_FRAME_LEN];
     memset(buf, 0, sizeof(buf));
-    char log_buffer[256];
+    char log_buffer[280];
 
     struct ethhdr *eth = (struct ethhdr *)buf;
     memcpy(eth->h_dest, dst_mac, 6);
@@ -859,7 +859,7 @@ void send_dhcp_raw(int raw_sock,
         free(pseudo_buf);
     } else {
         udp->check = 0;
-        snprintf(log_buffer, sizeof(log_buffer), "DHCP: Warning - Failed to allocate memory for UDP checksum calculation.\n");
+        snprintf(log_buffer, sizeof(log_buffer), "DHCP_DBG: Warning - Failed to allocate memory for UDP checksum calculation.\n");
         write(tx_fd, log_buffer, strlen(log_buffer));
     }
 
@@ -874,13 +874,13 @@ void send_dhcp_raw(int raw_sock,
     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     if (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == 0xFFFFFFFF) {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "DHCP: Sending RAW broadcast packet (MAC: %02x:%02x:%02x:%02x:%02x:%02x, IP: %s)\n",
+                 "DHCP_DBG: Sending RAW broadcast packet (MAC: %02x:%02x:%02x:%02x:%02x:%02x, IP: %s)\n",
                  dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
                  inet_ntoa(*(struct in_addr *)&dst_ip));
         write(tx_fd, log_buffer, strlen(log_buffer));
     } else {
         snprintf(log_buffer, sizeof(log_buffer),
-                 "DHCP: Sending RAW unicast packet to MAC: %02x:%02x:%02x:%02x:%02x:%02x, IP: %s\n",
+                 "DHCP_DBG: Sending RAW unicast packet to MAC: %02x:%02x:%02x:%02x:%02x:%02x, IP: %s\n",
                  dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
                  inet_ntoa(*(struct in_addr *)&dst_ip));
         write(tx_fd, log_buffer, strlen(log_buffer));
@@ -890,10 +890,10 @@ void send_dhcp_raw(int raw_sock,
           0, (struct sockaddr *)&addr, sizeof(addr));
     
     if (sent < 0) {
-        snprintf(log_buffer, sizeof(log_buffer), "DHCP: Failed to send raw packet: %s\n", strerror(errno));
+        snprintf(log_buffer, sizeof(log_buffer), "DHCP_DBG: Failed to send raw packet: %s\n", strerror(errno));
         write(tx_fd, log_buffer, strlen(log_buffer));
     } else {
-        snprintf(log_buffer, sizeof(log_buffer), "DHCP: Successfully sent %zd raw bytes\n", sent);
+        snprintf(log_buffer, sizeof(log_buffer), "DHCP_DBG: Successfully sent %zd raw bytes\n", sent);
         write(tx_fd, log_buffer, strlen(log_buffer));
     }
 }
