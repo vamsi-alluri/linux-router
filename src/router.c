@@ -284,7 +284,7 @@ void handle_service_response(int service_id, int fd) {
     if (count > 0) {
         
         fprintf(stderr, "\33[2K\r");
-        printf("[Service %d] %.*s", service_id, (int)count, buffer);
+        fprintf(stderr, "[Service %d] %.*s", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }
     
