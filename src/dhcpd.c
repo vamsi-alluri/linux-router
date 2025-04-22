@@ -14,6 +14,7 @@
 #include <netinet/udp.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
+#include "helper.h"
 
 #define BUFLEN 512 // Max length of buffer
 #define DHCP_CLIENT_PORT 68
@@ -21,7 +22,7 @@
 #define MAX_THREADS 20
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
-#define DHCP_SERVER_INTERFACE "enp0s8"  // Interface for raw packets
+#define DHCP_SERVER_INTERFACE "enp0s3"  // Interface for raw packets
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
@@ -42,6 +43,7 @@ typedef struct
     int recv_len;
     int use_raw;         // Flag to indicate if raw socket should be used
     unsigned char client_mac[6]; // For raw socket responses
+    int tx_fd;           // Pipe for writing logs back to router
 } thread_arg_t;
 
 // Function declarations 
@@ -64,7 +66,8 @@ void send_dhcp_raw(int raw_sock,
                   const unsigned char *src_mac, 
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
-                  dhcp_packet *payload, size_t payload_len);
+                  dhcp_packet *payload, size_t payload_len,
+                  int tx_fd);
 
 // Main DHCP service function that communicates with router
 void dhcp_main(int rx_fd, int tx_fd) {
@@ -111,7 +114,16 @@ void dhcp_main(int rx_fd, int tx_fd) {
         close(raw_socket);
         exit(EXIT_FAILURE);
     }
-    
+    int broadcast_enable = 1;
+    if (setsockopt(dhcp_socket, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable)) < 0) {
+        snprintf(buffer, sizeof(buffer), "Error: Failed to set broadcast option on UDP socket - %s\n", strerror(errno));
+        write(tx_fd, buffer, strlen(buffer));
+        close(dhcp_socket);
+        close(raw_socket);
+        exit(EXIT_FAILURE);
+    }
+
+
     // Setup socket addressing
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
@@ -228,7 +240,8 @@ void dhcp_main(int rx_fd, int tx_fd) {
                         thread_arg->recv_len = recv_len;
                         thread_arg->use_raw = 1;
                         memcpy(thread_arg->client_mac, client_mac, 6);
-                        
+                        thread_arg->tx_fd = tx_fd;
+
                         pthread_t thread_id;
                         if (pthread_create(&thread_id, NULL, handle_dhcp_request, thread_arg) != 0) {
                             write(tx_fd, "DHCP: Failed to create thread\n", 30);
@@ -283,7 +296,8 @@ void dhcp_main(int rx_fd, int tx_fd) {
                     thread_arg->socket = dhcp_socket;
                     thread_arg->recv_len = recv_len;
                     thread_arg->use_raw = 0;
-                    
+                    thread_arg->tx_fd = tx_fd;
+
                     pthread_t thread_id;
                     if (pthread_create(&thread_id, NULL, handle_dhcp_request, thread_arg) != 0) {
                         write(tx_fd, "DHCP: Failed to create thread\n", 30);
@@ -475,19 +489,24 @@ void *handle_dhcp_request(void *arg) {
     struct sockaddr_in si_other = thread_arg->client_addr;
     dhcp_packet packet = thread_arg->packet;
     int s = thread_arg->socket;
-    int slen = sizeof(si_other);
     int use_raw = thread_arg->use_raw;
+    int tx_fd = thread_arg->tx_fd;
     unsigned char client_mac[6];
-    
+    char log_buffer[256];
+
     if (use_raw) {
         memcpy(client_mac, thread_arg->client_mac, 6);
-        printf("[Thread %lu] Handling raw request from MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
-               pthread_self(), 
-               client_mac[0], client_mac[1], client_mac[2],
-               client_mac[3], client_mac[4], client_mac[5]);
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] Handling raw request from MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+                 pthread_self(),
+                 client_mac[0], client_mac[1], client_mac[2],
+                 client_mac[3], client_mac[4], client_mac[5]);
+        write(tx_fd, log_buffer, strlen(log_buffer));
     } else {
-        printf("[Thread %lu] Handling request from %s, port number:%d\n",
-               pthread_self(), inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] Handling request from %s, port number:%d\n",
+                 pthread_self(), inet_ntoa(si_other.sin_addr), ntohs(si_other.sin_port));
+        write(tx_fd, log_buffer, strlen(log_buffer));
     }
 
     // Verify magic cookie
@@ -495,7 +514,9 @@ void *handle_dhcp_request(void *arg) {
     memcpy(&magic_cookie, packet.options, sizeof(magic_cookie));
     magic_cookie = ntohl(magic_cookie);
     if (magic_cookie != DHCP_MAGIC_COOKIE) {
-        printf("[Thread %lu] Invalid DHCP packet (wrong magic cookie)\n", pthread_self());
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] Invalid DHCP packet (wrong magic cookie)\n", pthread_self());
+        write(tx_fd, log_buffer, strlen(log_buffer));
         free(thread_arg);
         pthread_exit(NULL);
     }
@@ -505,7 +526,9 @@ void *handle_dhcp_request(void *arg) {
     const uint8_t *msg_type_opt = get_dhcp_option(packet.options + 4, sizeof(packet.options) - 4,
                                                  DHCP_OPTION_MESSAGE_TYPE, &opt_len);
     if (!msg_type_opt || opt_len != 1) {
-        printf("[Thread %lu] Invalid DHCP packet (no message type)\n", pthread_self());
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] Invalid DHCP packet (no message type)\n", pthread_self());
+        write(tx_fd, log_buffer, strlen(log_buffer));
         free(thread_arg);
         pthread_exit(NULL);
     }
@@ -514,16 +537,20 @@ void *handle_dhcp_request(void *arg) {
     switch (msg_type) {
     case DHCPDISCOVER:
     {
-        printf("[Thread %lu] DHCP DISCOVER received from client\n", pthread_self());
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] DHCP DISCOVER received from client\n", pthread_self());
+        write(tx_fd, log_buffer, strlen(log_buffer));
         uint32_t new_ip = allocate_ip(use_raw ? client_mac : packet.chaddr, 3600);
         if (!new_ip) {
-            printf("[Thread %lu] No more IP addresses available\n", pthread_self());
+            snprintf(log_buffer, sizeof(log_buffer),
+                     "[Thread %lu] No more IP addresses available\n", pthread_self());
+            write(tx_fd, log_buffer, strlen(log_buffer));
             free(thread_arg);
             pthread_exit(NULL);
         }
         // Build DHCP OFFER packet
         dhcp_packet offer;
-        int offset = create_dhcp_packet(&offer, DHCPOFFER, packet.xid, 0, new_ip, 
+        int offset = create_dhcp_packet(&offer, DHCPOFFER, packet.xid, 0, new_ip,
                                       use_raw ? client_mac : packet.chaddr);
         uint32_t lease_time = htonl(3600);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
@@ -532,21 +559,35 @@ void *handle_dhcp_request(void *arg) {
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
         offer.options[offset++] = DHCP_OPTION_END;
 
-        printf("[Thread %lu] Sending DHCP OFFER to client with IP: %s\n",
-               pthread_self(), inet_ntoa(*(struct in_addr *)&new_ip));
-               
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] Sending DHCP OFFER to client with IP: %s\n",
+                 pthread_self(), inet_ntoa(*(struct in_addr *)&new_ip));
+        write(tx_fd, log_buffer, strlen(log_buffer));
+
         if (use_raw) {
             // Use broadcast MAC for DHCP offer
             unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, 0xFFFFFFFF, &offer, sizeof(offer));
-        } else if (sendto(s, &offer, sizeof(offer), 0, (struct sockaddr *)&si_other, slen) == -1) {
-            perror("sendto()");
+            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, 0xFFFFFFFF, &offer, sizeof(offer), tx_fd);
+        } else {
+            struct sockaddr_in dest_addr;
+            memset(&dest_addr, 0, sizeof(dest_addr));
+            dest_addr.sin_family = AF_INET;
+            dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
+            dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST); // 255.255.255.255
+            socklen_t dest_len = sizeof(dest_addr);
+
+            if (sendto(s, &offer, sizeof(offer), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
+                snprintf(log_buffer, sizeof(log_buffer), "sendto() OFFER UDP failed: %s\n", strerror(errno));
+                write(tx_fd, log_buffer, strlen(log_buffer));
+            }
         }
         break;
     }
     case DHCPREQUEST:
     {
-        printf("[Thread %lu] DHCP REQUEST received from client\n", pthread_self());
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] DHCP REQUEST received from client\n", pthread_self());
+        write(tx_fd, log_buffer, strlen(log_buffer));
         size_t opt_len;
         const uint8_t *req_ip_opt = get_dhcp_option(packet.options + 4, sizeof(packet.options) - 4,
                                                    DHCP_OPTION_REQUESTED_IP, &opt_len);
@@ -574,10 +615,12 @@ void *handle_dhcp_request(void *arg) {
         // Build DHCP ACK or NAK packet
         dhcp_packet ack;
         if (found) {
-            int offset = create_dhcp_packet(&ack, DHCPACK, packet.xid, 0, req_ip, 
+            int offset = create_dhcp_packet(&ack, DHCPACK, packet.xid, 0, req_ip,
                                          use_raw ? client_mac : packet.chaddr);
-            printf("[Thread %lu] Sending DHCP ACK to client for IP: %s\n",
-                   pthread_self(), inet_ntoa(*(struct in_addr *)&req_ip));
+            snprintf(log_buffer, sizeof(log_buffer),
+                     "[Thread %lu] Sending DHCP ACK to client for IP: %s\n",
+                     pthread_self(), inet_ntoa(*(struct in_addr *)&req_ip));
+            write(tx_fd, log_buffer, strlen(log_buffer));
             uint32_t lease_time = htonl(3600);
             offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
             offset = add_dhcp_option(ack.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
@@ -586,42 +629,71 @@ void *handle_dhcp_request(void *arg) {
             ack.options[offset++] = DHCP_OPTION_END;
             
             if (use_raw) {
-                // For clients that don't have an IP yet, use broadcast
                 if (packet.ciaddr == 0) {
                     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-                    send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, 0xFFFFFFFF, &ack, sizeof(ack));
+                    send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, 0xFFFFFFFF, &ack, sizeof(ack), tx_fd);
                 } else {
-                    // Direct unicast to client MAC
-                    send_dhcp_raw(s, server_mac, client_mac, server_ip, req_ip, &ack, sizeof(ack));
+                    send_dhcp_raw(s, server_mac, client_mac, server_ip, req_ip, &ack, sizeof(ack), tx_fd);
                 }
-            } else if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&si_other, slen) == -1) {
-                perror("sendto()");
+            } else {
+                struct sockaddr_in dest_addr;
+                memset(&dest_addr, 0, sizeof(dest_addr));
+                dest_addr.sin_family = AF_INET;
+                dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
+                socklen_t dest_len = sizeof(dest_addr);
+
+                if (packet.ciaddr == 0) {
+                    dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                } else {
+                    dest_addr.sin_addr.s_addr = req_ip;
+                }
+
+                if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
+                    snprintf(log_buffer, sizeof(log_buffer), "sendto() ACK UDP failed: %s\n", strerror(errno));
+                    write(tx_fd, log_buffer, strlen(log_buffer));
+                }
             }
         } else {
-            int offset = create_dhcp_packet(&ack, DHCPNAK, packet.xid, 0, 0, 
+            int offset = create_dhcp_packet(&ack, DHCPNAK, packet.xid, 0, 0,
                                          use_raw ? client_mac : packet.chaddr);
-            printf("[Thread %lu] Sending DHCP NAK to client\n", pthread_self());
+            snprintf(log_buffer, sizeof(log_buffer),
+                     "[Thread %lu] Sending DHCP NAK to client\n", pthread_self());
+            write(tx_fd, log_buffer, strlen(log_buffer));
             ack.options[offset++] = DHCP_OPTION_END;
             
             if (use_raw) {
                 unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, 0xFFFFFFFF, &ack, sizeof(ack));
-            } else if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&si_other, slen) == -1) {
-                perror("sendto()");
+                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, 0xFFFFFFFF, &ack, sizeof(ack), tx_fd);
+            } else {
+                struct sockaddr_in dest_addr;
+                memset(&dest_addr, 0, sizeof(dest_addr));
+                dest_addr.sin_family = AF_INET;
+                dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
+                dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                socklen_t dest_len = sizeof(dest_addr);
+
+                if (sendto(s, &ack, sizeof(ack), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
+                    snprintf(log_buffer, sizeof(log_buffer), "sendto() NAK UDP failed: %s\n", strerror(errno));
+                    write(tx_fd, log_buffer, strlen(log_buffer));
+                }
             }
         }
         break;
     }
     case DHCPRELEASE:
     {
-        printf("[Thread %lu] DHCP RELEASE received from client\n", pthread_self());
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] DHCP RELEASE received from client\n", pthread_self());
+        write(tx_fd, log_buffer, strlen(log_buffer));
         pthread_mutex_lock(&lease_mutex);
         for (int i = 0; i < MAX_LEASES; i++) {
-            if (leases[i].active && 
+            if (leases[i].active &&
                 memcmp(leases[i].mac, use_raw ? client_mac : packet.chaddr, 6) == 0) {
                 leases[i].active = 0;
-                printf("[Thread %lu] Released IP: %s\n",
-                      pthread_self(), inet_ntoa(*(struct in_addr *)&leases[i].ip));
+                snprintf(log_buffer, sizeof(log_buffer),
+                         "[Thread %lu] Released IP: %s\n",
+                         pthread_self(), inet_ntoa(*(struct in_addr *)&leases[i].ip));
+                write(tx_fd, log_buffer, strlen(log_buffer));
                 break;
             }
         }
@@ -629,7 +701,9 @@ void *handle_dhcp_request(void *arg) {
         break;
     }
     default:
-        printf("[Thread %lu] Unsupported DHCP message type: %d\n", pthread_self(), msg_type);
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "[Thread %lu] Unsupported DHCP message type: %d\n", pthread_self(), msg_type);
+        write(tx_fd, log_buffer, strlen(log_buffer));
     }
 
     free(thread_arg);
@@ -643,13 +717,8 @@ void *handle_dhcp_request(void *arg) {
 
 // Calculate IP header checksum
 uint16_t ip_checksum(void *vdata, size_t length) {
-    // Cast the data pointer to one that can be indexed
     uint8_t *data = (uint8_t *)vdata;
-    
-    // Initialize sum to zero
     uint32_t sum = 0;
-    
-    // Main summing loop
     size_t i;
     for (i = 0; i < length; i += 2) {
         uint16_t val = 0;
@@ -660,12 +729,8 @@ uint16_t ip_checksum(void *vdata, size_t length) {
         }
         sum += val;
     }
-    
-    // Add back carry bits
     sum = (sum >> 16) + (sum & 0xFFFF);
     sum += (sum >> 16);
-    
-    // Return one's complement
     return ~sum;
 }
 
@@ -677,7 +742,6 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip) {
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) return -1;
     
-    // Get MAC address
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
     if (ioctl(fd, SIOCGIFHWADDR, &ifr) < 0) {
@@ -686,7 +750,6 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip) {
     }
     memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
     
-    // Get IP address
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
     if (ioctl(fd, SIOCGIFADDR, &ifr) < 0) {
@@ -703,7 +766,6 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip) {
 int parse_dhcp_packet(const uint8_t *frame, size_t len,
                       dhcp_packet *packet, unsigned char *client_mac)
 {
-    // 1) Must have Ethernet + IP + UDP headers
     if (len < sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
         return 0;
     struct ethhdr *eth = (struct ethhdr *)frame;
@@ -718,16 +780,12 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     if (ntohs(udp->dest) != DHCP_SERVER_PORT) return 0;
 
     size_t dhcp_offset = sizeof(*eth) + ip_hdr_len + sizeof(*udp);
-
-    // require at least 4 bytes for magic cookie
     size_t avail = len - dhcp_offset;
     if (avail < 4) return 0;
 
-    // copy up to sizeof(dhcp_packet)
     size_t to_copy = avail < sizeof(dhcp_packet) ? avail : sizeof(dhcp_packet);
     memcpy(packet, frame + dhcp_offset, to_copy);
 
-    // --- filter by magic‑cookie + message type ---
     uint32_t cookie = ntohl(*(uint32_t*)packet->options);
     if (cookie != DHCP_MAGIC_COOKIE) return 0;
 
@@ -746,27 +804,26 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     return 1;
 }
 
-
 // Send DHCP response using raw socket
 void send_dhcp_raw(int raw_sock, 
                   const unsigned char *src_mac, 
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
-                  dhcp_packet *payload, size_t payload_len) {
+                  dhcp_packet *payload, size_t payload_len,
+                  int tx_fd) {
     
     uint8_t buf[MAX_FRAME_LEN];
     memset(buf, 0, sizeof(buf));
-    
-    // 1. Ethernet header
+    char log_buffer[256];
+
     struct ethhdr *eth = (struct ethhdr *)buf;
     memcpy(eth->h_dest, dst_mac, 6);
     memcpy(eth->h_source, src_mac, 6);
     eth->h_proto = htons(ETH_P_IP);
     
-    // 2. IP header
     struct iphdr *ip = (struct iphdr *)(buf + sizeof(*eth));
     ip->version = 4;
-    ip->ihl = 5;  // 5 * 4 bytes = 20 bytes
+    ip->ihl = 5;
     ip->tos = 0;
     ip->tot_len = htons(sizeof(*ip) + sizeof(struct udphdr) + payload_len);
     ip->id = htons(rand());
@@ -775,28 +832,68 @@ void send_dhcp_raw(int raw_sock,
     ip->protocol = IPPROTO_UDP;
     ip->saddr = src_ip;
     ip->daddr = dst_ip;
-    ip->check = 0;
     ip->check = ip_checksum(ip, sizeof(*ip));
     
-    // 3. UDP header
     struct udphdr *udp = (struct udphdr *)(buf + sizeof(*eth) + sizeof(*ip));
     udp->source = htons(DHCP_SERVER_PORT);
     udp->dest = htons(DHCP_CLIENT_PORT);
     udp->len = htons(sizeof(*udp) + payload_len);
-    udp->check = 0;  // Optional for IPv4
+    udp->check = 0;
     
-    // 4. Payload
-    memcpy(buf + sizeof(*eth) + sizeof(*ip) + sizeof(*udp), payload, payload_len);
+    uint8_t* payload_ptr = buf + sizeof(*eth) + sizeof(*ip) + sizeof(*udp);
+    memcpy(payload_ptr, payload, payload_len);
     
-    // 5. Link-layer address struct
+    size_t udp_len = sizeof(*udp) + payload_len;
+    size_t pseudo_header_len = 12 + udp_len;
+    uint8_t *pseudo_buf = malloc(pseudo_header_len);
+    if (pseudo_buf) {
+        memcpy(pseudo_buf, &ip->saddr, 4);
+        memcpy(pseudo_buf + 4, &ip->daddr, 4);
+        pseudo_buf[8] = 0;
+        pseudo_buf[9] = ip->protocol;
+        uint16_t udp_len_n = htons(udp_len);
+        memcpy(pseudo_buf + 10, &udp_len_n, 2);
+        memcpy(pseudo_buf + 12, udp, udp_len);
+        udp->check = ip_checksum(pseudo_buf, pseudo_header_len);
+        if (udp->check == 0) udp->check = 0xFFFF;
+        free(pseudo_buf);
+    } else {
+        udp->check = 0;
+        snprintf(log_buffer, sizeof(log_buffer), "DHCP: Warning - Failed to allocate memory for UDP checksum calculation.\n");
+        write(tx_fd, log_buffer, strlen(log_buffer));
+    }
+
     struct sockaddr_ll addr = {0};
     addr.sll_family = AF_PACKET;
     addr.sll_ifindex = if_nametoindex(DHCP_SERVER_INTERFACE);
     addr.sll_protocol = htons(ETH_P_IP);
     addr.sll_halen = ETH_ALEN;
     memcpy(addr.sll_addr, dst_mac, 6);
+
+    // Check if it's a broadcast
+    unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    if (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == 0xFFFFFFFF) {
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "DHCP: Sending RAW broadcast packet (MAC: %02x:%02x:%02x:%02x:%02x:%02x, IP: %s)\n",
+                 dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
+                 inet_ntoa(*(struct in_addr *)&dst_ip));
+        write(tx_fd, log_buffer, strlen(log_buffer));
+    } else {
+        snprintf(log_buffer, sizeof(log_buffer),
+                 "DHCP: Sending RAW unicast packet to MAC: %02x:%02x:%02x:%02x:%02x:%02x, IP: %s\n",
+                 dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
+                 inet_ntoa(*(struct in_addr *)&dst_ip));
+        write(tx_fd, log_buffer, strlen(log_buffer));
+    }
     
-    // Send the packet
-    sendto(raw_sock, buf, sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
+    ssize_t sent = sendto(raw_sock, buf, sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
           0, (struct sockaddr *)&addr, sizeof(addr));
+    
+    if (sent < 0) {
+        snprintf(log_buffer, sizeof(log_buffer), "DHCP: Failed to send raw packet: %s\n", strerror(errno));
+        write(tx_fd, log_buffer, strlen(log_buffer));
+    } else {
+        snprintf(log_buffer, sizeof(log_buffer), "DHCP: Successfully sent %zd raw bytes\n", sent);
+        write(tx_fd, log_buffer, strlen(log_buffer));
+    }
 }
