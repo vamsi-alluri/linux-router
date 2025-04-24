@@ -102,7 +102,7 @@ static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *na
     dup(0); // stderr
 }
 
-void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
+void start_service(service_t *svc, char *argv[], void (*entry)(int, int, int)) {
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -128,7 +128,7 @@ void start_service(service_t *svc, char *argv[], void (*entry)(int, int)) {
         // Notify router we're ready
         // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
-        entry(svc->router_to_svc[0], svc->svc_to_router[1]);
+        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose);
         
         
         close(svc->router_to_svc[0]); // Close pipes before exit
@@ -370,7 +370,7 @@ int main(int argc, char *argv[]) {
 
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {
-        void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
+        void (*entries[4])(int, int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
         service_t *service_selected = &services[i];
         strncpy(service_selected->name, SERVICE_NAMES[i], 4);
         (service_selected->name)[4] = '\0';

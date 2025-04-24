@@ -5,7 +5,7 @@
 #include "packet_helper.h"
 
 
-// transforms raw data to eth frame.
+// Transforms raw data to eth frame.
 const struct raw_ethernet_frame* extract_ethernet_frame(const uint8_t* network_buffer) {
     return (const struct raw_ethernet_frame*)network_buffer;
 }
@@ -63,6 +63,22 @@ const struct udp_header* extract_udp_header_from_ethernet_frame(const uint8_t* f
     const struct raw_ethernet_frame* eth_frame = extract_ethernet_frame(frame);
     const struct ipv4_packet* ip_pkt = extract_ipv4_packet_from_eth_payload(eth_frame->payload);
     return extract_udp_header_from_ipv4_packet(ip_pkt);
+}
+
+const struct icmp_header* extract_icmp_header_from_ipv4_packet(const struct ipv4_packet* packet){
+    return (const struct icmp_header*)((uint8_t*)packet + sizeof(struct ipv4_header));
+}
+
+const struct icmp_echo* extract_icmp_echo_header_from_ipv4_packet(const struct ipv4_packet* packet){
+    return (const struct icmp_echo*)((uint8_t*)packet + sizeof(struct ipv4_header));
+}
+
+const struct icmp_error* extract_icmp_error_header_from_ipv4_packet(const struct ipv4_packet* packet){
+    return (const struct icmp_error*)((uint8_t*)packet + sizeof(struct ipv4_header));
+}
+
+const struct arp_header* extract_arp_header_from_ethernet_frame(const uint8_t* frame) {
+    return (const struct arp_header*)(frame + sizeof(struct ethernet_header));
 }
 
 uint16_t compute_checksum(const void* data, size_t len) {

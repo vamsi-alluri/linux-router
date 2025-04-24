@@ -15,6 +15,9 @@ Use `print_verbose_ln` to print debug messages.
 
 Implemented in `napt.c`, `napt.h` with helper files `napt_helper.c`, `napt_helper.h`.
 
+**Definitions:**
+- Inbound: Traffic coming from the internet to the local network.
+- Outbound: Traffic going from the local network to the internet.
 
 
 ## Available commands:
