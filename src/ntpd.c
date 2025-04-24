@@ -11,6 +11,11 @@
 
 #define NTP_TIMESTAMP_DELTA 2208988800ull // Difference between UNIX and NTP start time
 #define NTPD_PORT 123                     // Well-known port
+#define DEFAULT_REFRESH 14400             // 4 hours in seconds
+
+
+// TODO: Make sure to get NTP time every 4 hours
+
 
 void ntp_main(int rx_fd, int tx_fd){
     // Send the PID back to the parent for processing
@@ -107,21 +112,19 @@ void ntp_main(int rx_fd, int tx_fd){
     return 0;
 }
 
-
-// TODO
-// void shutdown(int rx_fd, int tx_fd) {
-//     char buffer[256];
-//     ssize_t count;
+void shutdown(int rx_fd, int tx_fd) {
+    char buffer[256];
+    ssize_t count;
     
-//     while ((count = read(rx_fd, buffer, sizeof(buffer))) > 0) {
-//         // Process command from router
-//         if (strcmp(buffer, "shutdown") == 0) break;
+    while ((count = read(rx_fd, buffer, sizeof(buffer))) > 0) {
+        // Process command from router
+        if (strcmp(buffer, "shutdown") == 0) break;
         
-//         // Implementation logic
-//         write(tx_fd, "NTP: Processed command\n", 24);
-//     }
+        // Implementation logic
+        write(tx_fd, "NTP: Processed command\n", 24);
+    }
 
-//     // Clean shutdown on EOF or explicit command
-//     write(tx_fd, "NTP: Shutting down\n", 19);
-//     return 0;
-// }
+    // Clean shutdown on EOF or explicit command
+    write(tx_fd, "NTP: Shutting down\n", 19);
+    return 0;
+}

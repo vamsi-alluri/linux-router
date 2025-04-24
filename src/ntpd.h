@@ -57,6 +57,6 @@ typedef struct
 
 
 void ntp_main(int rx_fd, int tx_fd);
-// void shutdown(int rx_fd, int tx_fd);
+void shutdown(int rx_fd, int tx_fd);
 
 #endif /* NTPD_H */
