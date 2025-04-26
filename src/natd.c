@@ -97,13 +97,13 @@ typedef struct {
 static int lan_raw, wan_raw, rx_fd, tx_fd;
 static char *log_file_path = DEFAULT_LOG_PATH;
 static uint8_t wan_mac[6];
-static uint32_t wan_gateway_ip, lan_gateway_ip_as_int;
+static uint32_t wan_gateway_ip, lan_gateway_ip;
 static char wan_gateway_ip_str[INET_ADDRSTRLEN];
-static char lan_gateway_ip[INET_ADDRSTRLEN];
+static char lan_gateway_ip_str[INET_ADDRSTRLEN];
 static int verbose, tcp_timeout = TCP_TIMEOUT_DEFAULT, udp_timeout = UDP_TIMEOUT_DEFAULT, icmp_timeout = ICMP_TIMEOUT_DEFAULT, cleanup_interval = CLEANUP_INTERVAL_DEFAULT;
 
 // Explicit Function Declarations:
-int init_socket(char *iface_name);
+int init_socket(char *iface_name, uint32_t *ip_buffer, char *ip_buffer_str);
 void append_ln_to_log_file(const char *msg, ...);
 void append_ln_to_log_file_verbose(const char *msg, ...);
 static void vappend_ln_to_log_file(const char *msg, va_list args);
@@ -232,62 +232,21 @@ void append_ln_to_log_file_verbose(const char *msg, ...) {
     va_end(args);
 }
 
-int get_gateway_ip(const char *iface, char *gateway_ip, size_t size) {
-    FILE *fp = fopen("/proc/net/route", "r");
-    if (!fp) return -1;
-
-    char line[256];
-    // Skip the header line
-    fgets(line, sizeof(line), fp);
-
-    while (fgets(line, sizeof(line), fp)) {
-        char iface_name[32];
-        unsigned long dest, gateway, mask;
-        int flags, refcnt, use, metric, mtu, window, irtt;
-
-        int n = sscanf(line, "%31s %lx %lx %X %d %d %d %lx %d %d %d",
-                       iface_name, &dest, &gateway, &flags, &refcnt, &use,
-                       &metric, &mask, &mtu, &window, &irtt);
-
-        if (n < 11)
-            continue;
-
-        if (strcmp(iface_name, iface) == 0 && dest == 0) {
-            struct in_addr gw_addr;
-            gw_addr.s_addr = gateway;
-            strncpy(gateway_ip, inet_ntoa(gw_addr), size);
-            fclose(fp);
-            return 0;
-        }
-    }
-    fclose(fp);
-    return -1; // Not found
-}
-
 // Using the config files above load the configurations into the NAT table.
 // This should be called once at the start of the program.
 void init_and_load_configurations() {
        
     append_ln_to_log_file_verbose("Verbose mode enabled.");
-    
-    // Load defaults:
 
     // Interface and socket setup
-    wan_raw = init_socket(DEFAULT_WAN_IFACE);
-    lan_raw = init_socket(DEFAULT_LAN_IFACE);
+    wan_raw = init_socket(DEFAULT_WAN_IFACE, &wan_gateway_ip, &wan_gateway_ip_str);
+    lan_raw = init_socket(DEFAULT_LAN_IFACE, &lan_gateway_ip, &lan_gateway_ip_str);
     
     // Obsolete: I'm planning on using an ARP table to get MAC from IP.
     load_wan_next_hop_mac(DEFAULT_WAN_IFACE);
 
-    get_gateway_ip(DEFAULT_WAN_IFACE, wan_gateway_ip_str, sizeof(wan_gateway_ip_str));
-    get_gateway_ip(DEFAULT_LAN_IFACE, lan_gateway_ip, sizeof(lan_gateway_ip));
-    
-    struct in_addr addr;
-    inet_pton(AF_INET, wan_gateway_ip_str, &addr);
-    wan_gateway_ip = addr.s_addr;
-
     append_ln_to_log_file("[info] WAN Gateway IP: %s", wan_gateway_ip_str);
-    append_ln_to_log_file("[info] LAN Gateway IP: %s", lan_gateway_ip);
+    append_ln_to_log_file("[info] LAN Gateway IP: %s", lan_gateway_ip_str);
     
     append_ln_to_log_file("[info] WAN and LAN interfaces ready.");
 
@@ -439,38 +398,58 @@ void nat_table_cleanup() {
 
 /// Packet processing:
 
-
-int init_socket(char *iface_name){
-    
+int init_socket(char *iface_name, uint32_t *ip_buffer, char *ip_buffer_str) {
     struct sockaddr_ll saddr;
     struct ifreq ifr;
     int raw_sock;
+    int temp_sock;  // Temporary socket for IP lookup
 
     if((raw_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) < 0) {
-        append_ln_to_log_file("NAT: Socket creation failed.");
-
+        append_ln_to_log_file("Socket creation failed on iface %s.", iface_name);
         exit(EXIT_FAILURE);
     }
 
+    // Get interface index
     strncpy(ifr.ifr_name, iface_name, IFNAMSIZ);
     if(ioctl(raw_sock, SIOCGIFINDEX, &ifr) < 0) {
-        append_ln_to_log_file("NAT: Interface config failed.");
+        append_ln_to_log_file("Interface config failed on iface %s.", iface_name);
         close(raw_sock);
         exit(EXIT_FAILURE);
     }
 
+    // Get IP address using a temporary socket
+    if((temp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        append_ln_to_log_file("Temp socket creation failed on iface %s.", iface_name);
+        close(raw_sock);
+        exit(EXIT_FAILURE);
+    }
+
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ);
+    if(ioctl(temp_sock, SIOCGIFADDR, &ifr) < 0) {
+        append_ln_to_log_file("IP address retrieval failed on iface %s. Continuing without it.", iface_name);
+        close(temp_sock);
+    }
+    
+    // Store IP
+    struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    ip_buffer = ip_addr->sin_addr.s_addr;
+    
+    inet_ntop(AF_INET, &ip_buffer, ip_buffer_str, INET_ADDRSTRLEN);
+    close(temp_sock);
+
+    // Bind the socket.
     memset(&saddr, 0, sizeof(saddr));
     saddr.sll_family = AF_PACKET;
     saddr.sll_ifindex = ifr.ifr_ifindex;
     saddr.sll_protocol = htons(ETH_P_ALL);
     
     if(bind(raw_sock, (struct sockaddr*)&saddr, sizeof(saddr)) < 0) {
-        append_ln_to_log_file("NAT: Bind failed.");
+        append_ln_to_log_file("Bind failed on iface %s.", iface_name);
         close(raw_sock);
         exit(EXIT_FAILURE);
     }
 
-    // Promiscuous mode
+    // Promiscuous mode (existing code)
     if(ioctl(raw_sock, SIOCGIFFLAGS, &ifr) != -1) {
         ifr.ifr_flags |= IFF_PROMISC;
         ioctl(raw_sock, SIOCSIFFLAGS, &ifr);
