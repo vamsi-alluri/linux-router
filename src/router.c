@@ -34,7 +34,7 @@ typedef struct {
     int svc_to_router[2];
     bool running;
     char name[5];
-    void (* main_func)(int, int);
+    void (* main_func)(int, int, int);
 } service_t;
 
 typedef struct {
@@ -208,11 +208,11 @@ void cleanup_services(service_t *services) {
 
 // This function shows the process as running and the next process as dead.
 bool is_service_running(service_t *svc) {
-    print_verboseln("is_service_running pid: %d", svc->pid);
+    // print_verboseln("is_service_running pid: %d", svc->pid);
     if ((svc->pid) > 0){
         // Kill 0 returns 0 if the process is running.
         int result_from_kill = kill((svc->pid), 0); 
-        print_verboseln("Result from kill: %d", result_from_kill);
+        // print_verboseln("Result from kill: %d", result_from_kill);
         return !result_from_kill;
     }
     return false;

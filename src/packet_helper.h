@@ -12,16 +12,15 @@ struct ethernet_header {
 };
 
 struct raw_ethernet_frame {
-    struct ethernet_header header;           // 14 bytes
-    uint8_t payload;              // Max MTU
-    uint32_t frame_check_sequence;      // 4 bytes. It uses CRC to calculate the checksum. Check whether FCS is received at layer 2. 
+    struct ethernet_header header;  // 14 bytes
+    uint8_t payload[];               // Max MTU
 };
 
 struct ipv4_header {
     uint8_t ihl:4;
     uint8_t version:4;
     uint8_t tos;
-    uint16_t tot_len;
+    uint16_t tot_len;   // Total Length
     uint16_t id;
     uint16_t frag_off;
     uint8_t ttl;
