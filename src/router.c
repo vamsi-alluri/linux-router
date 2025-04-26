@@ -45,13 +45,44 @@ typedef struct {
 void print_verboseln(char *message, ...);
 void print_running_services(service_t *services);
 
+/* ================= Setup Functions ================= */
+int is_hello_world(char * in) {
+    bool output = strcmp(in, "Hello World!\n");
+    return output == 0;
+}
+
+void repeat(char * in, int in_length) {
+    fprintf(stdout, in);
+}
+
+void special_help(char * in, int in_length) {
+    fprintf(stdout, "That is not \"Hello World!\"\n");
+}
+
+void hello_prompt() {
+    fprintf(stdout, "Type \"Hello World!\"\n");
+}
+
 /* ================= Setup Wizard ================= */
 void setup_config() {
-    fprintf(stdout, "Hello World!\n");
-    char config_input[256];
-    fgets(config_input, 255, stdin);
-    config_input[255] = '\0';
-    fprintf(stdout, config_input);
+    require_input(hello_prompt, is_hello_world, repeat, special_help, 256);
+}
+
+void require_input(void (*prompt_func)(), int (*comp)(char *), void (*action_func)(char *, int), void (*help_func)(char *, int), int max_in_buf) {
+    char in_buf[max_in_buf];
+    
+    int out = 0;
+    do {
+        prompt_func();
+        fgets(in_buf, max_in_buf - 1, stdin);
+        in_buf[max_in_buf - 1] = '\0';
+        out = comp(in_buf);
+        if (out == 0) {
+            help_func(in_buf, max_in_buf);
+        }
+    } while (out == 0);
+
+    action_func(in_buf, max_in_buf);
 }
 
 /* ================= Process Creation ================= */
@@ -157,7 +188,7 @@ void start_service(service_t *svc, char *argv[]) {
         pid_t child_pid;
         if (read(svc->svc_to_router[0], &child_pid, sizeof(pid_t)) > 0) {
             svc->running = true;
-            svc->pid = child_pid;     // TODO: Have to figure out why we've to decrement 1 to the assigned pid.'.
+            svc->pid = child_pid;    
             printf("Service %s (PID %d) started\n", svc->name, svc->pid);
         }
     }
@@ -401,12 +432,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-<<<<<<< Updated upstream
-    // Create the services list struct
-=======
     setup_config();
 
->>>>>>> Stashed changes
     service_t services[NUM_SERVICES] = {0};
     void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
