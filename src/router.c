@@ -45,6 +45,15 @@ typedef struct {
 void print_verboseln(char *message, ...);
 void print_running_services(service_t *services);
 
+/* ================= Setup Wizard ================= */
+void setup_config() {
+    fprintf(stdout, "Hello World!\n");
+    char config_input[256];
+    fgets(config_input, 255, stdin);
+    config_input[255] = '\0';
+    fprintf(stdout, config_input);
+}
+
 /* ================= Process Creation ================= */
 static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
     // First fork to create background process
@@ -392,7 +401,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
+<<<<<<< Updated upstream
     // Create the services list struct
+=======
+    setup_config();
+
+>>>>>>> Stashed changes
     service_t services[NUM_SERVICES] = {0};
     void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
