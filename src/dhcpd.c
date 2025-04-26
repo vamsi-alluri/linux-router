@@ -15,7 +15,9 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <stdarg.h>
-#include <stdbool.h> // Added for bool, true, false
+#include <stdbool.h>
+#include <netinet/ip_icmp.h>
+#include <sys/types.h> 
 #include "helper.h"
 
 #define BUFLEN 512 // Max length of buffer
@@ -24,14 +26,14 @@
 #define MAX_THREADS 20
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
-#define DHCP_SERVER_INTERFACE "enp0s3"  // Interface for raw packets
+#define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
 pthread_mutex_t lease_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t thread_count_mutex = PTHREAD_MUTEX_INITIALIZER;
-int thread_count = 0;
-int dhcp_socket = -1;
+int thread_count = 0;  //current thread count
+int dhcp_socket = -1;  //dhcp packet socket
 int raw_socket = -1;  // Raw packet socket
 unsigned char server_mac[6]; // Server MAC address
 uint32_t server_ip = 0;      // Server IP address
@@ -62,6 +64,8 @@ int countActiveLeases();
 void die(char *s);
 uint16_t ip_checksum(void *vdata, size_t length);
 int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip);
+bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))); 
+void mark_ip_conflicted(uint32_t conflicted_ip);         
 int parse_dhcp_packet(const uint8_t *frame, size_t len, dhcp_packet *packet, unsigned char *client_mac);
 void send_dhcp_raw(int raw_sock, 
                   const unsigned char *src_mac, 
@@ -503,41 +507,283 @@ int create_dhcp_packet(dhcp_packet *packet, uint8_t msg_type, uint32_t xid,
     return offset;
 }
 
+/**
+ * @brief Allocates an IP address for a given MAC address.
+ *        Checks for existing leases first, then finds an available slot.
+ *        Avoids reusing slots marked as recently conflicted.
+ * @param mac The client MAC address.
+ * @param lease_time Requested lease duration (currently fixed).
+ * @return Allocated IP address in network byte order, or 0 if no address available.
+ */
 uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
 {
     int i;
     time_t now = time(NULL);
     uint32_t allocated_ip = 0;
+    int first_available_slot = -1;
+    const time_t CONFLICT_RETRY_DELAY = 60; // Don't reuse a conflicted slot for 60 seconds
 
     pthread_mutex_lock(&lease_mutex);
+
+    // 1. Check for an existing, active, non-conflicted lease for this MAC
     for (i = 0; i < MAX_LEASES; i++)
     {
         if (leases[i].active && memcmp(leases[i].mac, mac, 6) == 0)
         {
-            leases[i].lease_start = now;
-            leases[i].lease_end = now + lease_time;
-            allocated_ip = leases[i].ip;
-            break;
-        }
-    }
-    if (allocated_ip == 0)
-    {
-        for (i = 0; i < MAX_LEASES; i++)
-        {
-            if (!leases[i].active || leases[i].lease_end < now)
-            {
-                leases[i].active = 1;
-                memcpy(leases[i].mac, mac, 6);
-                leases[i].lease_start = now;
-                leases[i].lease_end = now + lease_time;
-                leases[i].ip = htonl(0xC0A80A00 | (i + 100));
-                allocated_ip = leases[i].ip;
-                break;
+            // Check if this existing lease slot recently had a conflict reported
+            if (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) < CONFLICT_RETRY_DELAY) {
+                 struct in_addr ip_addr = {.s_addr = leases[i].ip};
+                 append_ln_to_log_file("DHCP: MAC %02x:%02x:%02x:%02x:%02x:%02x requesting renewal for IP %s which recently conflicted. Denying renewal for now.",
+                          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], inet_ntoa(ip_addr));
+                 allocated_ip = 0; // Do not renew the conflicted IP immediately
+                 goto unlock_and_return; // Exit allocation process
             }
+
+            // Existing lease found and it's okay to renew
+            leases[i].lease_start = now;
+            leases[i].lease_end = now + lease_time; // Renew lease time
+            leases[i].conflict_detected_time = 0; // Clear any old conflict flag on successful renewal
+            allocated_ip = leases[i].ip;
+            struct in_addr ip_addr = {.s_addr = allocated_ip};
+            append_ln_to_log_file("DHCP: Renewing lease for MAC %02x:%02x:%02x:%02x:%02x:%02x with IP %s.",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], inet_ntoa(ip_addr));
+            goto unlock_and_return; // Found and renewed existing lease
         }
     }
+
+    // 2. No existing lease for this MAC, find the first available slot
+    // An available slot is one that is inactive, expired, OR was conflicted but the delay has passed.
+    for (i = 0; i < MAX_LEASES; i++)
+    {
+        bool is_expired = (!leases[i].active || leases[i].lease_end < now);
+        bool conflict_ok_to_retry = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) >= CONFLICT_RETRY_DELAY);
+
+        if (is_expired || conflict_ok_to_retry)
+        {
+            // This slot is potentially usable. Record the first one found.
+            if (first_available_slot == -1) {
+                first_available_slot = i;
+            }
+            // If it was conflicted but now okay to retry, clear the conflict time *before* assigning
+            if (conflict_ok_to_retry) {
+                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + 100))};
+                 append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (IP %s). Making available again.", i, inet_ntoa(ip_addr));
+                 leases[i].conflict_detected_time = 0;
+            }
+            // Optimization: If we found a truly expired/inactive slot, prefer it over a previously conflicted one.
+            // For simplicity now, we just take the first available slot encountered.
+            break; // Take the first suitable slot found in the loop
+        }
+    }
+
+    // 3. If an available slot was found, assign the lease details
+    if (first_available_slot != -1) {
+        i = first_available_slot; // Use the index of the found slot
+        leases[i].active = 1;
+        memcpy(leases[i].mac, mac, 6);
+        leases[i].lease_start = now;
+        leases[i].lease_end = now + lease_time;
+        // Assign IP based on the slot index (ensure this matches mark_ip_conflicted logic)
+        leases[i].ip = htonl(0xC0A80A00 | (i + 100));
+        leases[i].conflict_detected_time = 0; // Ensure conflict time is cleared for the new lease
+        allocated_ip = leases[i].ip;
+        struct in_addr ip_addr = {.s_addr = allocated_ip};
+         append_ln_to_log_file("DHCP: Assigning new lease in slot %d for MAC %02x:%02x:%02x:%02x:%02x:%02x with IP %s.",
+                 i, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], inet_ntoa(ip_addr));
+    } else {
+        // No available slots found after checking all MAX_LEASES
+        append_ln_to_log_file("DHCP: No available IP addresses in the pool for MAC %02x:%02x:%02x:%02x:%02x:%02x.",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        allocated_ip = 0;
+    }
+
+unlock_and_return:
     pthread_mutex_unlock(&lease_mutex);
     return allocated_ip;
+}
+
+/**
+ * @brief Checks if an IP address is already in use by sending an ICMP Echo Request.
+ * @param ip_to_check The IP address to check (in network byte order).
+ * @param tx_fd File descriptor for logging (marked unused for now).
+ * @return true if a conflict is detected (reply received), false otherwise (timeout or error).
+ * @note Requires root privileges to create a raw ICMP socket.
+ */
+bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))) {
+    int sock_raw_icmp = -1;
+    struct icmphdr icmp_hdr;
+    struct sockaddr_in dest_addr;
+    char send_buf[sizeof(struct icmphdr)]; // ICMP header only
+    char recv_buf[1024];
+    // Use a shorter timeout for conflict detection (e.g., 1 second)
+    struct timeval timeout = {1, 0};
+    bool conflict = false;
+    unsigned long tid = (unsigned long)pthread_self(); // For logging
+    pid_t pid = getpid(); // Use PID for ICMP ID
+
+    // Create raw socket for ICMP protocol
+    sock_raw_icmp = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock_raw_icmp < 0) {
+        // Log this critical error - often due to insufficient permissions
+        append_ln_to_log_file("[Thread %lu] ACD Error: Failed to create raw ICMP socket: %s. Cannot check for conflicts. Ensure server is run as root.", tid, strerror(errno));
+        return false; // Cannot perform check, assume no conflict to avoid blocking offers
+    }
+
+    // Set receive timeout on the socket
+    if (setsockopt(sock_raw_icmp, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        append_ln_to_log_file("[Thread %lu] ACD Warning: Failed to set ICMP socket timeout: %s.", tid, strerror(errno));
+        // Non-fatal, continue, but recvfrom might block longer than desired if kernel ignores it
+    }
+
+    // Prepare destination address structure
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = ip_to_check;
+
+    // Prepare ICMP Echo Request header
+    memset(&icmp_hdr, 0, sizeof(icmp_hdr));
+    icmp_hdr.type = ICMP_ECHO; // Echo Request type
+    icmp_hdr.code = 0;
+    icmp_hdr.un.echo.id = htons(pid & 0xFFFF); // Use lower 16 bits of PID for ID
+    icmp_hdr.un.echo.sequence = htons(1);      // Sequence number 1 for this check
+    icmp_hdr.checksum = 0;                     // Checksum calculated after filling buffer
+
+    // Copy header to buffer (without data payload for simple ping)
+    memcpy(send_buf, &icmp_hdr, sizeof(icmp_hdr));
+
+    // Calculate ICMP checksum
+    icmp_hdr.checksum = ip_checksum(send_buf, sizeof(send_buf));
+
+    // Copy header with calculated checksum back into the buffer
+    memcpy(send_buf, &icmp_hdr, sizeof(icmp_hdr));
+
+    // Send the ICMP Echo Request packet
+    if (sendto(sock_raw_icmp, send_buf, sizeof(send_buf), 0,
+               (struct sockaddr *)&dest_addr, sizeof(dest_addr)) <= 0) {
+        append_ln_to_log_file("[Thread %lu] ACD Warning: Failed to send ICMP Echo Request to %s: %s.", tid, inet_ntoa(dest_addr.sin_addr), strerror(errno));
+        close(sock_raw_icmp);
+        return false; // Cannot perform check reliably, assume no conflict
+    }
+
+    // Wait for a reply using select for finer timeout control
+    fd_set read_fds;
+    struct timeval remaining_timeout = timeout; // Start with 1 second (or original timeout value)
+    bool reply_found = false; // Flag to indicate if we found the specific reply
+
+    struct in_addr target_ip_addr = {.s_addr = ip_to_check}; // For logging target IP
+
+    while (remaining_timeout.tv_sec > 0 || remaining_timeout.tv_usec > 0) {
+        FD_ZERO(&read_fds);
+        FD_SET(sock_raw_icmp, &read_fds);
+
+        // Use select to wait for data or timeout
+        int select_ret = select(sock_raw_icmp + 1, &read_fds, NULL, NULL, &remaining_timeout);
+
+        if (select_ret < 0) {
+            // Error in select
+            if (errno == EINTR) continue; // Interrupted, retry select with updated timeout
+            append_ln_to_log_file("[Thread %lu] ACD Warning: select() error while waiting for ICMP reply for %s: %s.", tid, inet_ntoa(target_ip_addr), strerror(errno));
+            conflict = false; // Assume no conflict on error
+            goto cleanup_and_return; // Go to close(sock_raw_icmp)
+        } else if (select_ret == 0) {
+            // Timeout expired without receiving any further packets
+            // Log timeout only if we haven't already found the reply
+            if (!reply_found) {
+                 append_ln_to_log_file("[Thread %lu] ACD: ICMP Echo Request to %s timed out (select). Assuming no conflict.", tid, inet_ntoa(target_ip_addr));
+                 conflict = false;
+            }
+            goto cleanup_and_return; // Go to close(sock_raw_icmp)
+        }
+
+        // select_ret > 0, data is available on sock_raw_icmp
+        struct sockaddr_in recv_addr;
+        socklen_t recv_addr_len = sizeof(recv_addr);
+        ssize_t bytes_received = recvfrom(sock_raw_icmp, recv_buf, sizeof(recv_buf), 0,
+                                         (struct sockaddr *)&recv_addr, &recv_addr_len);
+
+        if (bytes_received > 0) {
+            struct iphdr *ip_reply_hdr = (struct iphdr *)recv_buf;
+            size_t ip_reply_hdr_len = ip_reply_hdr->ihl * 4;
+            struct in_addr received_from_ip = {.s_addr = ip_reply_hdr->saddr};
+
+            // Basic check: Ignore packets obviously too small
+            if (bytes_received < ip_reply_hdr_len + sizeof(struct icmphdr)) {
+                 append_ln_to_log_file("[Thread %lu] ACD Debug: Received packet too small (%zd bytes) from %s. Ignoring.", tid, bytes_received, inet_ntoa(received_from_ip));
+                 continue; // Continue loop to wait for more packets
+            }
+
+            struct icmphdr *icmp_reply_hdr = (struct icmphdr *)(recv_buf + ip_reply_hdr_len);
+            uint16_t received_id = ntohs(icmp_reply_hdr->un.echo.id);
+            uint16_t expected_id = pid & 0xFFFF;
+
+            append_ln_to_log_file("[Thread %lu] ACD Debug: Received ICMP type %d, code %d, id %u (expected %u) from source %s (target was %s).",
+                     tid, icmp_reply_hdr->type, icmp_reply_hdr->code, received_id, expected_id,
+                     inet_ntoa(received_from_ip), inet_ntoa(target_ip_addr));
+
+            // *** The Crucial Check ***
+            // Is it an Echo Reply (type 0)?
+            // Is it from the IP we pinged?
+            // Does the ID match our process?
+            if (icmp_reply_hdr->type == ICMP_ECHOREPLY &&
+                ip_reply_hdr->saddr == ip_to_check &&
+                icmp_reply_hdr->un.echo.id == htons(expected_id))
+            {
+                // It's the reply we were looking for! Conflict detected.
+                conflict = true;
+                reply_found = true; // Mark that we found it
+                append_ln_to_log_file("[Thread %lu] ACD: Received matching ICMP Echo Reply from %s. CONFLICT DETECTED.", tid, inet_ntoa(target_ip_addr));
+                break; // Exit the while loop, conflict confirmed
+            } else {
+                 // It's some other ICMP packet (like the outgoing request, or unrelated)
+                 append_ln_to_log_file("[Thread %lu] ACD Debug: Received ICMP packet did not match criteria. Ignoring and continuing wait.", tid);
+                 // Continue loop to wait for more packets within the remaining timeout
+            }
+        } else if (bytes_received < 0) {
+            // Error on recvfrom
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Should not happen with select, but handle defensively
+                append_ln_to_log_file("[Thread %lu] ACD Debug: recvfrom returned EAGAIN/EWOULDBLOCK despite select. Continuing wait.", tid);
+                continue; // Continue loop
+            } else {
+                 append_ln_to_log_file("[Thread %lu] ACD Warning: Error receiving ICMP reply for %s: %s. Assuming no conflict.", tid, inet_ntoa(target_ip_addr), strerror(errno));
+                 conflict = false;
+                 goto cleanup_and_return; // Go to close(sock_raw_icmp)
+            }
+        }
+        // If bytes_received == 0, it's unusual, treat as no reply and let timeout handle it.
+    } // End while loop
+
+    // If loop finished because break was called (reply_found is true), conflict is true.
+    // If loop finished because timeout expired (select_ret == 0), conflict is false.
+
+cleanup_and_return:
+    close(sock_raw_icmp);
+    return conflict;
+}
+
+/**
+ * @brief Marks an IP address as conflicted in the lease table.
+ * @param conflicted_ip The IP address (network byte order) that caused a conflict.
+ */
+void mark_ip_conflicted(uint32_t conflicted_ip) {
+     time_t now = time(NULL);
+     pthread_mutex_lock(&lease_mutex);
+     for (int i = 0; i < MAX_LEASES; i++) {
+         // Find the lease slot corresponding to the IP
+         // This relies on the IP allocation scheme being consistent (htonl(0xC0A80A00 | (i + 100)))
+         if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + 100)) == conflicted_ip) {
+              leases[i].active = 0; // Mark inactive
+              leases[i].conflict_detected_time = now;
+              // Clear other fields to make the slot fully available after delay
+              memset(leases[i].mac, 0, 6);
+              leases[i].lease_start = 0;
+              leases[i].lease_end = 0;
+              struct in_addr ip_addr = {.s_addr = conflicted_ip};
+              append_ln_to_log_file("DHCP: Marked IP %s (lease index %d) as conflicted at time %ld.", inet_ntoa(ip_addr), i, now);
+              break; // Found and marked the slot
+         }
+     }
+     pthread_mutex_unlock(&lease_mutex);
 }
 
 void *handle_dhcp_request(void *arg) {
@@ -592,22 +838,51 @@ void *handle_dhcp_request(void *arg) {
     case DHCPDISCOVER:
     {
         append_ln_to_log_file("[Thread %lu] DHCP DISCOVER received.", tid);
-        uint32_t new_ip = allocate_ip(client_mac, 3600);
+
+        uint32_t new_ip = 0;
+        int allocation_attempts = 0;
+        const int MAX_ALLOCATION_ATTEMPTS = 5;
+
+        while (allocation_attempts < MAX_ALLOCATION_ATTEMPTS) {
+            allocation_attempts++;
+            new_ip = allocate_ip(client_mac, 3600);
+
+            if (!new_ip) {
+                append_ln_to_log_file("[Thread %lu] Attempt %d: allocate_ip returned no IP.", tid, allocation_attempts);
+                break;
+            }
+
+            struct in_addr check_ip_addr;
+            check_ip_addr.s_addr = new_ip;
+            append_ln_to_log_file("[Thread %lu] Attempt %d: Checking potential IP %s for conflicts...", tid, allocation_attempts, inet_ntoa(check_ip_addr));
+
+            if (check_ip_conflict(new_ip, tx_fd)) {
+                append_ln_to_log_file("[Thread %lu] CONFLICT DETECTED for IP %s. Marking as conflicted and trying another.", tid, inet_ntoa(check_ip_addr));
+                mark_ip_conflicted(new_ip);
+                new_ip = 0;
+            } else {
+                append_ln_to_log_file("[Thread %lu] No conflict detected for IP %s.", tid, inet_ntoa(check_ip_addr));
+                break;
+            }
+        }
+
         if (!new_ip) {
-            append_ln_to_log_file("[Thread %lu] No more IP addresses available for MAC %02x:%02x:%02x:%02x:%02x:%02x",
+            append_ln_to_log_file("[Thread %lu] Failed to allocate a conflict-free IP for MAC %02x:%02x:%02x:%02x:%02x:%02x after %d attempts. Cannot send OFFER.",
                      tid, client_mac[0], client_mac[1], client_mac[2],
-                     client_mac[3], client_mac[4], client_mac[5]);
+                     client_mac[3], client_mac[4], client_mac[5], allocation_attempts);
             break;
         }
+
         struct in_addr allocated_ip_addr;
         allocated_ip_addr.s_addr = new_ip;
-        append_ln_to_log_file("[Thread %lu] Allocated IP %s for MAC %02x:%02x:%02x:%02x:%02x:%02x",
+        append_ln_to_log_file("[Thread %lu] Final Allocated conflict-free IP %s for MAC %02x:%02x:%02x:%02x:%02x:%02x",
                  tid, inet_ntoa(allocated_ip_addr),
                  client_mac[0], client_mac[1], client_mac[2],
                  client_mac[3], client_mac[4], client_mac[5]);
 
         dhcp_packet offer;
         int offset = create_dhcp_packet(&offer, DHCPOFFER, packet.xid, 0, new_ip, client_mac);
+
         uint32_t lease_time = htonl(3600);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
@@ -621,7 +896,7 @@ void *handle_dhcp_request(void *arg) {
 
         if (use_raw) {
             unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &offer, sizeof(offer), tx_fd);
+            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &offer, sizeof(dhcp_packet), tx_fd);
         } else {
             struct sockaddr_in dest_addr;
             memset(&dest_addr, 0, sizeof(dest_addr));
