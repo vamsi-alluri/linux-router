@@ -7,6 +7,8 @@
 #define MAX_IPS 3            
 #define MAX_ENTRIES 256
 #define DEFAULT_TTL 14400    /* 4 hours in seconds */
+#define LOOKUP_IP 0x08080808     // Google DNS IPv4
+
 
 typedef struct
 {
@@ -39,11 +41,10 @@ typedef struct
 static dns_bucket *domain_table[MAX_ENTRIES];   /* Table contains pointers to buckets that contain the actual dns entry */
                                                 /* and a pointer to the next dns entry in the table for navigation. */
 static int lastIndex = 0;
+static int dns_ip = LOOKUP_IP;          /* IP address for recursive DNS queries. Will be stored in network byte order */
 
 void dns_main(int rx_fd, int tx_fd);
 int process_domain(unsigned short offset, char *buffer, char *domain, int index);
-int get_domain(int offset, char *domain, char **ip);
-// int lookup_domains(char *buffer, dns_hdr *hd);
-void shutdown(int rx_fd, int tx_fd);
+int get_domain(dns_entry *map, int offset, char *buffer);
 
 #endif /* DNSD_H */
