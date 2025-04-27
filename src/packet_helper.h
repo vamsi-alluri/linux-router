@@ -17,9 +17,9 @@ struct raw_ethernet_frame {
 };
 
 struct ipv4_header {
-    uint8_t ihl:4;
-    uint8_t version:4;
-    uint8_t tos;
+    uint8_t ihl:4;      // Header Length, value is usually 5
+    uint8_t version:4;  // Version = 4
+    uint8_t tos;        
     uint16_t tot_len;   // Total Length
     uint16_t id;
     uint16_t frag_off;
@@ -133,13 +133,8 @@ void reassemble_ethernet(const struct raw_ethernet_frame frame, const struct eth
                              const uint8_t* payload, size_t payload_len);
 
 uint16_t compute_checksum(const void* data, size_t len);
-void update_ip_checksum(struct ipv4_header* ip);
-void update_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len);
-void update_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len);
-
-void update_ip_address(struct ipv4_header* ip, uint32_t new_src, uint32_t new_dst);
-void update_tcp_ports(struct ipv4_header* ip, struct tcp_header* tcp, uint16_t new_src, uint16_t new_dst, const uint8_t* payload, size_t payload_len);
-void update_udp_ports(struct ipv4_header* ip, struct udp_header* udp, uint16_t new_src, uint16_t new_dst, const uint8_t* payload, size_t payload_len);
+uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len);
+uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len);
 // End of Reassembly
 
 #endif /* PACKET_HELPER_h */

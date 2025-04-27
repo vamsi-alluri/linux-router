@@ -5,25 +5,19 @@
 #include "packet_helper.h"
 
 
-// Transforms raw data to eth frame.
+// buffer -> raw_ethernet_frame
 const struct raw_ethernet_frame* extract_ethernet_frame(const uint8_t* network_buffer) {
     return (const struct raw_ethernet_frame*)network_buffer;
 }
 
-// Extracts eth header from eth frame.
+// raw_ethernet_frame -> ethernet_header
 const struct ethernet_header* extract_ethernet_header_from_frame(const struct raw_ethernet_frame* frame) {
     return &frame->header;
 }
 
-// Extracts eth header from raw data.
+// buffer -> raw_ethernet_frame
 const struct ethernet_header* extract_ethernet_header_from_buffer(const struct raw_ethernet_frame* frame) {
     return (const struct ethernet_header*)frame;
-}
-
-// raw ethernet frame -> IPV4 packet
-const struct ipv4_packet* extract_ipv4_packet_from_eth_frame(const uint8_t* raw_ethernet_frame) {
-    const struct raw_ethernet_frame* frame = extract_ethernet_frame(raw_ethernet_frame);
-    return (const struct ipv4_packet*)frame->payload;
 }
 
 // ethernet payload -> IPV4 packet
@@ -101,13 +95,7 @@ uint16_t compute_checksum(const void* data, size_t len) {
     return ~sum;
 }
 
-void update_ip_checksum(struct ipv4_header* ip) {
-    ip->check = 0;
-    ip->check = compute_checksum(ip, ip->ihl * 4);
-}
-
-void update_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len) {
-    tcp->check = 0;
+uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len) {
     
     struct {
         uint32_t src_addr;  // SRC IP ADDRESS
@@ -135,10 +123,10 @@ void update_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const u
         sum = (sum & 0xffff) + (sum >> 16);
     }
 
-    tcp->check = ~sum;
+    return ~sum;
 }
 
-void update_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len) {
+uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len) {
     udp->check = 0;
     
     // Pseudo-header for checksum calculation
@@ -167,27 +155,7 @@ void update_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const u
         sum = (sum & 0xffff) + (sum >> 16);
     }
 
-    udp->check = ~sum;
-}
-
-
-
-void update_ip_address(struct ipv4_header* ip, uint32_t new_src, uint32_t new_dst) {
-    ip->saddr = new_src;
-    ip->daddr = new_dst;
-    update_ip_checksum(ip);
-}
-
-void update_tcp_ports(struct ipv4_header* ip, struct tcp_header* tcp, uint16_t new_src, uint16_t new_dst, const uint8_t* payload, size_t payload_len) {
-    tcp->sport = htons(new_src);
-    tcp->dport = htons(new_dst);
-    update_tcp_checksum(ip, tcp, payload, payload_len);
-}
-
-void update_udp_ports(struct ipv4_header* ip, struct udp_header* udp, uint16_t new_src, uint16_t new_dst, const uint8_t* payload, size_t payload_len) {
-    udp->sport = htons(new_src);
-    udp->dport = htons(new_dst);
-    update_udp_checksum(ip, udp, payload, payload_len);
+    return ~sum;
 }
 
 

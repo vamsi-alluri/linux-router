@@ -11,6 +11,7 @@
 #include <arpa/inet.h>          // For address conversion.
 #include <stdarg.h>             // For va_start
 #include <errno.h>
+#include <inttypes.h>           // For printing hex code of uint16_t.
 
 #include <netinet/ether.h>
 #include <netinet/ip.h>
@@ -20,6 +21,7 @@
 #include <ctype.h>
 #include <time.h>
 #include "packet_helper.h"
+#include "natd.h"
 
 
 #define BUFFER_SIZE 1518                // To cover the whole ethernet frame.
@@ -47,6 +49,24 @@
 // 443 for https.
 // If there is something on these ports, pass through if it exists in the 
 
+
+// Global variables:
+static int lan_raw, wan_raw, rx_fd, tx_fd;
+static char *log_file_path = DEFAULT_LOG_PATH;
+static uint8_t wan_mac[6];
+static uint32_t wan_gateway_ip, lan_gateway_ip;
+static char wan_machine_ip[INET_ADDRSTRLEN];
+static char lan_machine_ip[INET_ADDRSTRLEN];
+static int verbose, tcp_timeout = TCP_TIMEOUT_DEFAULT, udp_timeout = UDP_TIMEOUT_DEFAULT, icmp_timeout = ICMP_TIMEOUT_DEFAULT, cleanup_interval = CLEANUP_INTERVAL_DEFAULT;
+
+// Explicit Function Declarations:
+int init_socket(char *iface_name);
+void append_ln_to_log_file(const char *msg, ...);
+void append_ln_to_log_file_verbose(const char *msg, ...);
+static void vappend_ln_to_log_file(const char *msg, va_list args);
+uint16_t allocate_port(uint8_t protocol);
+
+
 // NAT table:
 struct nat_entry{
     uint32_t orig_ip;           // LAN IP
@@ -65,231 +85,6 @@ typedef struct nat_bucket {
 } nat_bucket;  
 
 nat_bucket *nat_table[NAT_TABLE_SIZE];  
-
-
-
-// NAT configuration file format:
-typedef struct {
-    uint32_t public_ip;         // External IP (network byte order)
-    uint16_t port_start;        // 60000
-    uint16_t port_end;          // 65000
-    uint8_t tcp_timeout;        // In minutes (default 60)
-    uint8_t udp_timeout;        // In minutes (default 5)
-    uint8_t icmp_timeout;       // In seconds (default 60)
-    char log_path[256];         // "/var/log/natd.log"
-    size_t max_log_size;        // 10MB default
-} nat_global_config;
-
-typedef struct {
-    uint32_t private_ip;        // Internal IP (0 for wildcard)
-    uint16_t private_port;      // Internal port (0 for wildcard)
-    uint32_t public_ip;         // Mapped public IP
-    uint16_t public_port;       // Mapped public port
-    uint8_t protocol;           // 6=TCP, 17=UDP, 1=ICMP
-} nat_static_mapping;
-
-typedef struct {
-    char iface_name[IFNAMSIZ];  // Load the default "enp0s8", if not found in the config file.
-    uint8_t is_in_local_area;          // 0=WAN, 1=LAN
-} nat_interface;
-
-// Global variables:
-static int lan_raw, wan_raw, rx_fd, tx_fd;
-static char *log_file_path = DEFAULT_LOG_PATH;
-static uint8_t wan_mac[6];
-static uint32_t wan_gateway_ip, lan_gateway_ip_as_int;
-static char wan_gateway_ip_str[INET_ADDRSTRLEN];
-static char lan_gateway_ip[INET_ADDRSTRLEN];
-static int verbose, tcp_timeout = TCP_TIMEOUT_DEFAULT, udp_timeout = UDP_TIMEOUT_DEFAULT, icmp_timeout = ICMP_TIMEOUT_DEFAULT, cleanup_interval = CLEANUP_INTERVAL_DEFAULT;
-
-// Explicit Function Declarations:
-int init_socket(char *iface_name);
-void append_ln_to_log_file(const char *msg, ...);
-void append_ln_to_log_file_verbose(const char *msg, ...);
-static void vappend_ln_to_log_file(const char *msg, va_list args);
-
-
-
-/// Utility Functions:
-
-int is_local_bound_packet(uint32_t dst_ip, uint32_t src_ip) {
-    // Compare against LAN subnet mask (e.g., 192.168.20.0/24) Comms to gateway machine.
-    // TODO: Drop packets LAN 192.168.20.1 - This works now.
-    uint32_t src_ip_host = ntohl(src_ip);
-    uint32_t dst_ip_host = ntohl(dst_ip);
-    int is_local = (dst_ip_host & MASK) == (src_ip_host & MASK);
-    // append_ln_to_log_file("NAT: dst_ip & 0xFFFFFF00: %d", (dst_ip_host & 0xFFFFFF00));
-    // append_ln_to_log_file("NAT: src_ip & 0xFFFFFF00: %d", (src_ip_host & 0xFFFFFF00));
-    return is_local;
-}
-
-// Checks if src MAC address is of the WAN iface.
-int is_packet_outgoing(struct ethernet_header *eth_header){
-    return memcmp(eth_header->src_mac, wan_mac, 6) == 0;
-}
-
-// Allocates a port incrementally.
-uint16_t allocate_port(uint8_t protocol) {  
-    static uint16_t next_port = 32768;      // Start in ephemeral range (32768-60999)  
-    uint16_t candidate = next_port++;  
-
-    // Check for port collision  
-    for (int i = 0; i < NAT_TABLE_SIZE; i++) {  
-        for (struct nat_bucket *b = nat_table[i]; b != NULL; b = b->next) {  
-            if (b->entry->trans_port == candidate &&  
-                b->entry->protocol == protocol) {  
-                candidate = next_port++;    // Collision → try next port  
-                i = -1;                     // Restart search  
-                break;
-            }
-        }
-    }
-    append_ln_to_log_file("Allocated port: %u", candidate);
-
-    if (next_port > 60999) next_port = 32768; 
-    return candidate;  
-}  
-
-// Obsolete: I'm planning on using an ARP table to get MAC from IP.
-void load_wan_next_hop_mac(const char *iface) {  
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);  
-    struct ifreq ifr;  
-
-    strncpy(ifr.ifr_name, iface, IFNAMSIZ);  
-    ioctl(fd, SIOCGIFHWADDR, &ifr);  
-    memcpy(wan_mac, ifr.ifr_hwaddr.sa_data, 6);  
-
-    close(fd);  
-}  
-
-
-// Sends binary content to router.
-void send_to_router(unsigned char *msg, int msg_len) {
-    write(tx_fd, msg, msg_len);
-}
-
-char* time_to_fstr(time_t _time, char buffer[26]){
-    strftime(*buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&_time));
-}
-
-static void vappend_ln_to_log_file(const char *msg, va_list args) {
-
-    // Clean up the log file if the size is more than 10 MB.
-    va_list argp;  
-
-    FILE *log_file = fopen(log_file_path, "r");
-    if (log_file) {
-        fseek(log_file, 0, SEEK_END);
-        long file_size = ftell(log_file);
-        fclose(log_file);
-        
-        if (file_size > MAX_LOG_SIZE) {
-            log_file = fopen(log_file_path, "w");
-            if (log_file) {
-                fprintf(log_file, "\n\n");
-                fclose(log_file);
-                append_ln_to_log_file("Log file size exceeded %d bytes. Cleared the log file.", MAX_LOG_SIZE);
-            }
-        }
-    }
-
-    if (msg == NULL || strcmp("", msg) == 0){
-        log_file = fopen(log_file_path, "a");
-        if (log_file) {
-            fprintf(log_file, "\n");
-            fclose(log_file);
-        }
-        return;
-    }
-
-    time_t now = time(NULL);
-    char buffer[26];
-    strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
-    
-    log_file = fopen(log_file_path, "a");
-    if (log_file) {
-        fprintf(log_file, "[%s] ", buffer);
-        vfprintf(log_file, msg, args);
-        fprintf(log_file, "\n");
-        fclose(log_file);
-    }
-}
-
-void append_ln_to_log_file(const char *msg, ...) {
-    
-    va_list args;
-    va_start(args, msg);
-    vappend_ln_to_log_file(msg, args);
-    va_end(args);
-}
-
-void append_ln_to_log_file_verbose(const char *msg, ...) {
-    if (verbose != 1) return;
-
-    va_list args;
-    va_start(args, msg);
-    vappend_ln_to_log_file(msg, args);
-    va_end(args);
-}
-
-int get_gateway_ip(const char *iface, char *gateway_ip, size_t size) {
-
-    
-    int temp_sock;  // Temporary socket for IP lookup
-    struct ifreq ifr;
-
-    // Get IP address using a temporary socket
-    if((temp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        append_ln_to_log_file("Temp socket creation failed on iface %s.", iface);
-        exit(EXIT_FAILURE);
-    }
-
-    strncpy(ifr.ifr_name, iface, IFNAMSIZ);
-    if(ioctl(temp_sock, SIOCGIFADDR, &ifr) < 0) {
-        append_ln_to_log_file("IP address retrieval failed on iface %s. Continuing without it.", iface);
-        close(temp_sock);
-    }
-    
-    // Store IP
-    struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
-    uint32_t ip_buffer = ip_addr->sin_addr.s_addr;
-    
-    inet_ntop(AF_INET, &ip_buffer, gateway_ip, INET_ADDRSTRLEN);
-    close(temp_sock);
-
-}
-
-
-// Using the config files above load the configurations into the NAT table.
-// This should be called once at the start of the program.
-void init_and_load_configurations() {
-       
-    append_ln_to_log_file_verbose("Verbose mode enabled.");
-    
-    // Load defaults:
-
-    // Interface and socket setup
-    wan_raw = init_socket(DEFAULT_WAN_IFACE);
-    lan_raw = init_socket(DEFAULT_LAN_IFACE);
-    
-    // Obsolete: I'm planning on using an ARP table to get MAC from IP.
-    // load_wan_next_hop_mac(DEFAULT_WAN_IFACE);
-
-    get_gateway_ip(DEFAULT_WAN_IFACE, wan_gateway_ip_str, sizeof(wan_gateway_ip_str));
-    get_gateway_ip(DEFAULT_LAN_IFACE, lan_gateway_ip, sizeof(lan_gateway_ip));
-    
-    struct in_addr addr;
-    inet_pton(AF_INET, wan_gateway_ip_str, &addr);
-    wan_gateway_ip = addr.s_addr;
-
-    append_ln_to_log_file("[info] WAN Gateway IP: %s", wan_gateway_ip_str);
-    append_ln_to_log_file("[info] LAN Gateway IP: %s", lan_gateway_ip);
-    
-    append_ln_to_log_file("[info] WAN and LAN interfaces ready.");
-
-    // If failed, throw a critical error to router and log it.
-}
-
 
 /// NAT table functions:
 uint32_t hash_key(uint32_t ip, uint16_t port, uint8_t proto) {  
@@ -441,8 +236,188 @@ void nat_table_cleanup() {
     }  
 }
 
-/// Packet processing:
 
+/// Utility Functions:
+
+int is_local_bound_packet(uint32_t dst_ip, uint32_t src_ip) {
+    uint32_t src_ip_host = ntohl(src_ip);
+    uint32_t dst_ip_host = ntohl(dst_ip);
+    int is_local = (dst_ip_host & MASK) == (src_ip_host & MASK);
+    // append_ln_to_log_file("NAT: dst_ip & 0xFFFFFF00: %d", (dst_ip_host & 0xFFFFFF00));
+    // append_ln_to_log_file("NAT: src_ip & 0xFFFFFF00: %d", (src_ip_host & 0xFFFFFF00));
+    return is_local;
+}
+
+// Checks if src MAC address is of the WAN iface.
+int is_packet_outgoing(struct ethernet_header *eth_header){
+    // wan_mac is loaded at the start of the application.
+    return memcmp(eth_header->src_mac, wan_mac, 6) == 0;
+}
+
+// Allocates a port incrementally.
+uint16_t allocate_port(uint8_t protocol) {  
+    static uint16_t next_port = 32768;      // Start in ephemeral range (32768-60999)  
+    uint16_t candidate = next_port++;  
+
+    // Check for port collision  
+    for (int i = 0; i < NAT_TABLE_SIZE; i++) {  
+        for (struct nat_bucket *b = nat_table[i]; b != NULL; b = b->next) {  
+            if (b->entry->trans_port == candidate &&  
+                b->entry->protocol == protocol) {  
+                candidate = next_port++;    // Collision → try next port  
+                i = -1;                     // Restart search  
+                break;
+            }
+        }
+    }
+    append_ln_to_log_file("Allocated port: %u", candidate);
+
+    if (next_port > 60999) next_port = 32768; 
+    return candidate;  
+}  
+
+void get_machines_wan_mac(const char *iface) {  
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);  
+    struct ifreq ifr;  
+
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ);  
+    ioctl(fd, SIOCGIFHWADDR, &ifr);  
+    memcpy(wan_mac, ifr.ifr_hwaddr.sa_data, 6);  
+
+    close(fd);  
+}  
+
+
+// Sends binary content to router.
+void send_to_router(unsigned char *msg, int msg_len) {
+    write(tx_fd, msg, msg_len);
+}
+
+char* time_to_fstr(time_t _time, char buffer[26]){
+    strftime(*buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&_time));
+}
+
+static void vappend_ln_to_log_file(const char *msg, va_list args) {
+
+    // Clean up the log file if the size is more than 10 MB.
+    va_list argp;  
+
+    FILE *log_file = fopen(log_file_path, "r");
+    if (log_file) {
+        fseek(log_file, 0, SEEK_END);
+        long file_size = ftell(log_file);
+        fclose(log_file);
+        
+        if (file_size > MAX_LOG_SIZE) {
+            log_file = fopen(log_file_path, "w");
+            if (log_file) {
+                fprintf(log_file, "\n\n");
+                fclose(log_file);
+                append_ln_to_log_file("Log file size exceeded %d bytes. Cleared the log file.", MAX_LOG_SIZE);
+            }
+        }
+    }
+
+    if (msg == NULL || strcmp("", msg) == 0){
+        log_file = fopen(log_file_path, "a");
+        if (log_file) {
+            fprintf(log_file, "\n");
+            fclose(log_file);
+        }
+        return;
+    }
+
+    time_t now = time(NULL);
+    char buffer[26];
+    strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
+    
+    log_file = fopen(log_file_path, "a");
+    if (log_file) {
+        fprintf(log_file, "[%s] ", buffer);
+        vfprintf(log_file, msg, args);
+        fprintf(log_file, "\n");
+        fclose(log_file);
+    }
+}
+
+void append_ln_to_log_file(const char *msg, ...) {
+    
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file(msg, args);
+    va_end(args);
+}
+
+void append_ln_to_log_file_verbose(const char *msg, ...) {
+    if (verbose != 1) return;
+
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file(msg, args);
+    va_end(args);
+}
+
+int get_gateway_ip(const char *iface, char *gateway_ip, size_t size) {
+
+    
+    int temp_sock;  // Temporary socket for IP lookup
+    struct ifreq ifr;
+
+    // Get IP address using a temporary socket
+    if((temp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        append_ln_to_log_file("Temp socket creation failed on iface %s.", iface);
+        exit(EXIT_FAILURE);
+    }
+
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ);
+    if(ioctl(temp_sock, SIOCGIFADDR, &ifr) < 0) {
+        append_ln_to_log_file("IP address retrieval failed on iface %s. Continuing without it.", iface);
+        close(temp_sock);
+    }
+    
+    // Store IP
+    struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    uint32_t ip_buffer = ip_addr->sin_addr.s_addr;
+    
+    inet_ntop(AF_INET, &ip_buffer, gateway_ip, INET_ADDRSTRLEN);
+    close(temp_sock);
+
+}
+
+
+// Using the config files above load the configurations into the NAT table.
+// This should be called once at the start of the program.
+void init_and_load_configurations() {
+       
+    append_ln_to_log_file_verbose("Verbose mode enabled.");
+    
+    // Load defaults:
+
+    // Interface and socket setup
+    wan_raw = init_socket(DEFAULT_WAN_IFACE);
+    lan_raw = init_socket(DEFAULT_LAN_IFACE);
+    get_machines_wan_mac(DEFAULT_WAN_IFACE);        // Assigns to wan_mac.
+    
+    // Obsolete: I'm planning on using an ARP table to get MAC from IP.
+    // load_wan_next_hop_mac(DEFAULT_WAN_IFACE);
+
+    get_gateway_ip(DEFAULT_WAN_IFACE, wan_machine_ip, sizeof(wan_machine_ip));
+    get_gateway_ip(DEFAULT_LAN_IFACE, lan_machine_ip, sizeof(lan_machine_ip));
+    
+    struct in_addr addr;
+    inet_pton(AF_INET, wan_machine_ip, &addr);
+    wan_gateway_ip = addr.s_addr;
+
+    append_ln_to_log_file("[info] WAN Gateway IP: %s", wan_machine_ip);
+    append_ln_to_log_file("[info] LAN Gateway IP: %s", lan_machine_ip);
+    
+    append_ln_to_log_file("[info] WAN and LAN interfaces ready.");
+
+    // If failed, throw a critical error to router and log it.
+}
+
+
+/// Packet processing:
 
 int init_socket(char *iface_name){
     
@@ -485,60 +460,6 @@ int init_socket(char *iface_name){
 
 
 
-void update_udp_ports_1(struct ipv4_header* ip, struct udp_header* udp, uint16_t new_src, uint16_t new_dst, uint8_t *payload, size_t payload_len) {
-    udp->sport = htons(new_src);
-    udp->dport = htons(new_dst);
-    append_ln_to_log_file("Before calling udp checksum: Updated UDP ports: %u -> %u", new_src, new_dst);
-    update_udp_checksum_1(ip, udp, payload, payload_len);
-}
-
-void update_udp_checksum_1(struct ipv4_header* ip, struct udp_header* udp, uint8_t *udp_payload, size_t payload_len) {
-    udp->check = 0;
-    
-    // Pseudo-header for checksum calculation
-    struct {
-        uint32_t src_addr;
-        uint32_t dst_addr;
-        uint8_t zeros;
-        uint8_t protocol;
-        uint16_t udp_len;
-    } pseudo_header;
-
-    pseudo_header.src_addr = ip->saddr;
-    pseudo_header.dst_addr = ip->daddr;
-    pseudo_header.zeros = 0;
-    pseudo_header.protocol = IPPROTO_UDP;
-    pseudo_header.udp_len = udp->len;
-
-    append_ln_to_log_file("Before calling udp checksum: UDP length: %u", pseudo_header.udp_len);
-
-    // Calculate checksum over pseudo-header
-    uint32_t sum = compute_checksum(&pseudo_header, sizeof(pseudo_header));
-
-    append_ln_to_log_file("Pseudo header checksum: %d", sum);
-
-    // Add the UDP header and payload
-    sum += compute_checksum(udp, sizeof(struct udp_header));
-
-    append_ln_to_log_file("After udp headers are added: %d", sum);
-    append_ln_to_log_file("Length of udp payload: %d", payload_len);
-
-    sum += compute_checksum(udp_payload, payload_len);
-
-    append_ln_to_log_file("After payload: %d", sum);
-
-    while (sum >> 16) {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-
-    append_ln_to_log_file("Final checksum: %d", ~sum);
-
-    udp->check = ~sum;
-}
-
-
-
-
 // Flow: From LAN to WAN => 192.168.20.2 -> 172.217.215.102
 void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     
@@ -566,8 +487,6 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
         append_ln_to_log_file("NAT: Packet is local bound, not processing.");
         return;
     }
-
-    
 
     struct nat_entry *incoming_packet_details = malloc(sizeof(struct nat_entry));
 
@@ -624,22 +543,38 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             ip_header->saddr = translated_nat_entry->trans_ip;
 
             // Network byte order translation happens in update_tcp_ports.
-            update_tcp_ports(ip_header, tcp_h,
-                translated_nat_entry->trans_port,  // New source port (WAN)
-                dport,                             // Original destination port
-                tcp_payload, tcp_payload_len
-            );      // This updated TCP checksum as well.
+            // Manually assign the translation and call the checksum. Don't use the function.
     
 
             break;
 
 
         case UDP_IP_TYPE:{
+            // Extraction.
             struct udp_header *udp_h = extract_udp_header_from_ipv4_packet(ip_packet);
+            uint16_t udp_len_host = ntohs(udp_h->len);
+            
+            size_t udp_payload_len = (udp_len_host > sizeof(struct udp_header)) 
+                               ? (udp_len_host - sizeof(struct udp_header)) 
+                               : 0;
+
+            
+            uint8_t udp_payload[udp_payload_len];
+            memcpy(udp_payload, &ip_packet->payload + sizeof(struct udp_header), udp_payload_len); // Copy UDP payload
+
+            uint16_t received_check = ntohs(udp_h->check);
+            udp_h->check = 0; // Set checksum to 0 for calculation.
+            uint16_t udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
+            append_ln_to_log_file("UDP checksum before any change: 0x%04" PRIx16 ", received checksum value: 0x%04" PRIx16, udp_check, received_check);
+
+            if (udp_h->sport == NULL) {
+                append_ln_to_log_file("[Error] Failed to extract UDP header.");
+                return;
+            }
+
             incoming_packet_details->orig_port = ntohs(udp_h->sport);
             dport = ntohs(udp_h->dport);
 
-            
             char src_ip_str[INET_ADDRSTRLEN];
             char dst_ip_str[INET_ADDRSTRLEN];
           
@@ -653,19 +588,25 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
                 append_ln_to_log_file("[Error] Failed to enrich entry.");
                 return;
             }
+
             // Translation:
             ip_header->saddr = translated_nat_entry->trans_ip;
-            
-            uint16_t udp_len_host = ntohs(udp_h->len);
-            // Calculate payload length (ensure non-negative)
-            size_t payload_len = (udp_len_host > sizeof(struct udp_header)) 
-                               ? (udp_len_host - sizeof(struct udp_header)) 
-                               : 0;
 
-            uint8_t udp_payload[payload_len];
-            memcpy(udp_payload, &ip_packet->payload + sizeof(struct udp_header), payload_len); // Copy UDP payload
+            udp_payload[udp_payload_len];
+            memcpy(udp_payload, &ip_packet->payload + sizeof(struct udp_header), udp_payload_len); // Copy UDP payload
             
-            update_udp_ports_1(ip_header, udp_h, translated_nat_entry->trans_port, dport, udp_payload, ntohs(udp_h->len) - sizeof(struct udp_header));
+            udp_h->sport = htons(translated_nat_entry->trans_port);
+            udp_h->dport = htons(dport);
+            
+            udp_check = compute_udp_checksum(&ip_header, &udp_h, udp_payload, udp_payload_len);
+            
+            udp_h->check = udp_check;
+            
+            uint16_t udp_check_1 = compute_udp_checksum(&ip_header, &udp_h, udp_payload, udp_payload_len);
+
+            if (udp_check != udp_check_1) {
+                append_ln_to_log_file("[Error] UDP checksum mismatch on recalculation: %u != %u", udp_check, udp_check_1);
+            }
 
             break;
         }
@@ -684,11 +625,10 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     append_ln_to_log_file("WAN IP: %d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
     append_ln_to_log_file("WAN Port: %u", dport);
     append_ln_to_log_file("Protocol: %u", incoming_packet_details->protocol);
-    append_ln_to_log_file(NULL);
 
     
     // Recalculate IP checksum
-    update_ip_checksum(&ip_header);
+    ip_header->check = compute_checksum(ip_header, ip_header->ihl * 4);
     append_ln_to_log_file("NAT: Updated IP checksum: %u", ip_header->check);
 
 
@@ -718,6 +658,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     }
     append_ln_to_log_file("NAT: Sent %zd bytes to WAN interface.", sent_bytes);
     append_ln_to_log_file("NAT: Outbound packet sent to WAN interface.");
+    append_ln_to_log_file(NULL);
 
     // https://www.rfc-editor.org/rfc/rfc4787#section-4.3 for timeouts.
     // For UDP, only update for an outbound packet.
@@ -808,6 +749,7 @@ void nat_main(int router_rx, int router_tx, int verbose_l) {
     verbose = verbose_l;
     
     unsigned char buffer[BUFFER_SIZE];
+    char command_from_router[256];
 
     // Send the PID to router process for "killing" purposes.
     pid_t pid = getpid();
@@ -848,12 +790,25 @@ void nat_main(int router_rx, int router_tx, int verbose_l) {
             break;
         }
 
-        if(FD_ISSET(rx_fd, &read_fds)) {
-            char cmd[256];
-            // TODO: Update this to handle different configurations.
-            if(read(rx_fd, cmd, sizeof(cmd)) <= 0 || strcmp(cmd, "shutdown") == 0) {
+        if (FD_ISSET(rx_fd, &read_fds)) {
+            memset(command_from_router, 0, sizeof(command_from_router));
+            int count = read(rx_fd, command_from_router, sizeof(command_from_router) - 1);
+            
+            // Process router command
+            if (read(rx_fd, command_from_router, sizeof(command_from_router)) <= 0 || strcmp(command_from_router, "shutdown") == 0) {
                 append_ln_to_log_file("Received shutdown command from router: Shutting down.");
+                send_to_router("NAT: Shutting down.", 13);
                 break;
+            } 
+            //else if (strcmp(buffer, "something") == 0) {
+                //char status_msg[256];
+                //snprintf(status_msg, sizeof(status_msg), "DHCP: Active leases: %d, Active threads: %d\n", countActiveLeases());
+                //write(tx_fd, buffer, count);
+            //}
+            else {
+                char msg[300];
+                snprintf(msg, sizeof(msg), "NAT: Unknown command '%s'\n", command_from_router);
+                write(tx_fd, msg, strlen(msg));
             }
         }
 

@@ -337,7 +337,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
                 }
             } else if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
-                fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
+                //fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
