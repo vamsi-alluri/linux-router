@@ -688,15 +688,15 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
     
     // Recalculate IP checksum
-    ip_header->check = 0;
     update_ip_checksum(&ip_header);
+    append_ln_to_log_file("NAT: Updated IP checksum: %u", ip_header->check);
 
 
     // Update Ethernet headers for WAN interface
     uint8_t wan_mac_1[6] = {0x08, 0x00, 0x27, 0x03, 0x44, 0xa4}; // 10.0.2.15
     memcpy(eth_header->src_mac, wan_mac_1, 6);
     
-    static uint8_t dst_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02}; // 10.0.2.2
+    uint8_t dst_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02}; // 10.0.2.2
     memcpy(eth_header->dst_mac, dst_mac, 6); // Set destination MAC to WAN MAC
 
     struct sockaddr_ll dest_addr = {
