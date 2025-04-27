@@ -318,6 +318,13 @@ struct nat_entry* find_by_original(struct nat_entry *details) {
             b->entry->protocol == details->protocol) 
         {
             b->entry->last_used = time(NULL);
+
+            
+            char ip_str[INET_ADDRSTRLEN];
+            struct in_addr addr = {.s_addr = b->entry->trans_ip};
+            inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN);
+
+            append_ln_to_log_file("Found entry: %s:%u", ip_str, b->entry->trans_port);
             return b->entry;
         }
     }
@@ -348,7 +355,8 @@ struct nat_entry* enrich_entry(struct nat_entry *details) {
     // Try to find existing entry first
     struct nat_entry *existing = find_by_original(details);
 
-    
+    // Temporarily disabling NAT look up.
+    // existing = NULL
     if (existing) {
         char ip_str[INET_ADDRSTRLEN];
         struct in_addr addr = {.s_addr = existing->trans_ip};
@@ -356,9 +364,9 @@ struct nat_entry* enrich_entry(struct nat_entry *details) {
         
         append_ln_to_log_file("NAT: Existing entry found: %s:%u -> %s:%u",
                                 inet_ntoa(*(struct in_addr*)&details->orig_ip),
-                                ntohs(details->orig_port),
+                                details->orig_port,
                                 ip_str,
-                                ntohs(existing->trans_port));
+                                existing->trans_port);
         return existing;
     }
 
@@ -619,6 +627,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             // Translation:
             ip_header->saddr = translated_nat_entry->trans_ip;
 
+            // Network byte order translation happens in update_tcp_ports.
             update_tcp_ports(ip_header, tcp_h,
                 translated_nat_entry->trans_port,  // New source port (WAN)
                 dport,                             // Original destination port
@@ -671,10 +680,10 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
     append_ln_to_log_file("Outbound Packet details:");
 
-    unsigned char *bytes = (unsigned char *)&incoming_packet_details->orig_ip;
+    unsigned char *bytes = (unsigned char *)&ip_header->saddr;
     append_ln_to_log_file("LAN IP: %d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
 
-    append_ln_to_log_file("LAN Port: %u", incoming_packet_details->orig_port);
+    append_ln_to_log_file("LAN Port: %u", incoming_packet_details->trans_port);
     bytes = (unsigned char *)&dst_ip;
     append_ln_to_log_file("WAN IP: %d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
     append_ln_to_log_file("WAN Port: %u", dport);
@@ -694,7 +703,8 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     .sll_protocol = htons(ETH_P_ALL),
     .sll_ifindex = if_nametoindex("enp0s3"),  // Replace with WAN interface
     .sll_halen = ETH_ALEN,
-    .sll_addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} // Broadcast MAC
+    .sll_addr = {0x08, 0x00, 0x27, 0x03, 0x44, 0xa4} // Broadcast MAC
+    // 08 00 27 03 44 a4
 };
     // Send the packet to the WAN interface.
     ssize_t sent_bytes = sendto(wan_raw, buffer, len, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
