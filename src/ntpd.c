@@ -27,8 +27,8 @@ void ntp_main(int rx_fd, int tx_fd)
     strncpy(server_hostname, DEFAULT_SERVER, sizeof(DEFAULT_SERVER) - 1);
     server_hostname[sizeof(DEFAULT_SERVER) - 1] = '\0'; // Null-terminate
 
-    time_t last_refresh = refresh_time();
-    int refresh_interval = DEFAULT_REFRESH;
+    last_refresh = refresh_time();
+    refresh_interval = DEFAULT_REFRESH;
 
     struct sockaddr_in ser_addr, cli_addr;
     int flags, s, slen = sizeof(cli_addr), recv_len, send_len, select_ret;
@@ -117,7 +117,7 @@ void ntp_main(int rx_fd, int tx_fd)
                     if (buffer[i] == '\n')
                     {
                         command[pos] = '\0';
-                        handle_command(rx_fd, tx_fd, command, &last_refresh, &refresh_interval);
+                        handle_command(rx_fd, tx_fd, command);
                         pos = 0;
                     }
                     else
@@ -252,7 +252,7 @@ time_t refresh_time()
     return time(NULL);
 }
 
-void handle_command(int rx_fd, int tx_fd, char *command, int *last_refresh, int *refresh_interval)
+void handle_command(int rx_fd, int tx_fd, char *command)
 {
     // Handle each command and write reply to tx_fd
     if (strncmp(command, "shutdown", 9) == 0)
@@ -271,7 +271,7 @@ void handle_command(int rx_fd, int tx_fd, char *command, int *last_refresh, int 
     }
     else if (strncmp(command, "refresh", 8) == 0)
     {
-        *last_refresh = refresh_time();
+        last_refresh = refresh_time();
         write(tx_fd, "NTP: Refreshed Local Time\n", 26);
     }
     else if (strncmp(command, "interval ", 9) == 0)
@@ -279,7 +279,7 @@ void handle_command(int rx_fd, int tx_fd, char *command, int *last_refresh, int 
         char temp[50];
         strncpy(temp, command + 9, strlen(command + 9) - 1);
         temp[sizeof(command + 9) - 1] = '\0'; // Null-terminate
-        *refresh_interval = atoi(temp);
+        refresh_interval = atoi(temp);
         write(tx_fd, "NTP: Changed Refresh Interval\n", 30);
     }
     else

@@ -16,9 +16,11 @@ typedef struct
     unsigned long xmt;                     /* Transmit Timestamp */
 } ntp_packet;
 
+static time_t last_refresh;
+static int refresh_interval;
 
 void ntp_main(int rx_fd, int tx_fd);
 time_t refresh_time();
-void handle_command(int rx_fd, int tx_fd, char *command, int *last_refresh, int *refresh_interval);
+void handle_command(int rx_fd, int tx_fd, char *command);
 
 #endif /* NTPD_H */
