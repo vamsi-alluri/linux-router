@@ -10,6 +10,18 @@ Capabilities: NAPT, DHCP, NTP, DNS, CLI Management App
 ### Note for using verbose mode: 
 Use `print_verbose_ln` to print debug messages.
 
+### DHCP Implementation:
+The router includes a full-featured DHCP server with the following capabilities:
+- Automatic IP address allocation from configurable subnet (default 192.168.10.0/24)
+- Support for all standard DHCP message types (DISCOVER, OFFER, REQUEST, ACK, NAK, RELEASE)
+- Lease management with configurable lease time
+- Concurrent request handling using multi-threading
+- Thread-safe operations with mutex protection
+
+#### DHCP CLI Commands:
+- `status` - Shows current DHCP server status including active leases and threads
+- `list_leases` - Displays all active DHCP leases with IP, MAC, and expiration time
+- `shutdown` - Gracefully terminates the DHCP service
 
 ### NAT - Network Address and Port Translation
 
