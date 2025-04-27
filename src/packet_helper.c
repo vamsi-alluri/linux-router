@@ -96,6 +96,11 @@ uint16_t compute_checksum(const void* data, size_t len) {
     return ~sum;
 }
 
+void update_ip_checksum(struct ipv4_header* ip) {
+    ip->check = 0; // Must zero before calculation
+    ip->check = compute_checksum(ip, ip->ihl * 4); // Only header, no payload
+}
+
 uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len) {
     
     #pragma pack(push, 1) 
@@ -109,25 +114,26 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
     #pragma pack(pop)
     // Reference: https://www.baeldung.com/cs/pseudo-header-tcp#the-pseudo-header-in-tcpip
     
-    #pragma pack(pop)
+    // Populate pseudo-header
     pseudo_header.src_addr = ip->saddr;
     pseudo_header.dst_addr = ip->daddr;
     pseudo_header.zeros = 0;
     pseudo_header.protocol = IPPROTO_TCP;
-    pseudo_header.tcp_len = htons(ntohs(ip->tot_len) - (ip->ihl * 4));
+    pseudo_header.tcp_len = htons(ntohs(ip->tot_len) - (ip->ihl * 4)); // TCP segment length
 
-    // Calculate checksum over pseudo-header
-    uint32_t sum = compute_checksum(&pseudo_header, sizeof(pseudo_header));
+    // Create contiguous buffer
+    size_t total_len = sizeof(pseudo_header) + (tcp->doff * 4) + payload_len;
+    uint8_t *buf = malloc(total_len);
 
-    // Add the TCP header and payload
-    sum += compute_checksum(tcp, tcp->doff * 4);
-    sum += compute_checksum(payload, payload_len);
+    memcpy(buf, &pseudo_header, sizeof(pseudo_header));
+    memcpy(buf + sizeof(pseudo_header), tcp, tcp->doff * 4); // Include TCP options
+    memcpy(buf + sizeof(pseudo_header) + (tcp->doff * 4), payload, payload_len);
 
-    while (sum >> 16) {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
+    // Compute checksum
+    uint16_t checksum = compute_checksum(buf, total_len);
+    free(buf);
 
-    return ~sum;
+    return checksum;
 }
 
 uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len) {

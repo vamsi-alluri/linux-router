@@ -617,6 +617,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
     
     // Recalculate IP checksum
+    ip_header->check = 0; // Reset checksum before recalculation
     ip_header->check = compute_checksum(ip_header, ip_header->ihl * 4);
     append_ln_to_log_file("NAT: Updated IP checksum: %u", ip_header->check);
 
