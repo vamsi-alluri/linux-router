@@ -233,36 +233,32 @@ void append_ln_to_log_file_verbose(const char *msg, ...) {
 }
 
 int get_gateway_ip(const char *iface, char *gateway_ip, size_t size) {
-    FILE *fp = fopen("/proc/net/route", "r");
-    if (!fp) return -1;
 
-    char line[256];
-    // Skip the header line
-    fgets(line, sizeof(line), fp);
+    
+    int temp_sock;  // Temporary socket for IP lookup
+    struct ifreq ifr;
 
-    while (fgets(line, sizeof(line), fp)) {
-        char iface_name[32];
-        unsigned long dest, gateway, mask;
-        int flags, refcnt, use, metric, mtu, window, irtt;
-
-        int n = sscanf(line, "%31s %lx %lx %X %d %d %d %lx %d %d %d",
-                       iface_name, &dest, &gateway, &flags, &refcnt, &use,
-                       &metric, &mask, &mtu, &window, &irtt);
-
-        if (n < 11)
-            continue;
-
-        if (strcmp(iface_name, iface) == 0 && dest == 0) {
-            struct in_addr gw_addr;
-            gw_addr.s_addr = gateway;
-            strncpy(gateway_ip, inet_ntoa(gw_addr), size);
-            fclose(fp);
-            return 0;
-        }
+    // Get IP address using a temporary socket
+    if((temp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        append_ln_to_log_file("Temp socket creation failed on iface %s.", iface);
+        exit(EXIT_FAILURE);
     }
-    fclose(fp);
-    return -1; // Not found
+
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ);
+    if(ioctl(temp_sock, SIOCGIFADDR, &ifr) < 0) {
+        append_ln_to_log_file("IP address retrieval failed on iface %s. Continuing without it.", iface);
+        close(temp_sock);
+    }
+    
+    // Store IP
+    struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    uint32_t ip_buffer = ip_addr->sin_addr.s_addr;
+    
+    inet_ntop(AF_INET, &ip_buffer, gateway_ip, INET_ADDRSTRLEN);
+    close(temp_sock);
+
 }
+
 
 // Using the config files above load the configurations into the NAT table.
 // This should be called once at the start of the program.
@@ -277,7 +273,7 @@ void init_and_load_configurations() {
     lan_raw = init_socket(DEFAULT_LAN_IFACE);
     
     // Obsolete: I'm planning on using an ARP table to get MAC from IP.
-    load_wan_next_hop_mac(DEFAULT_WAN_IFACE);
+    // load_wan_next_hop_mac(DEFAULT_WAN_IFACE);
 
     get_gateway_ip(DEFAULT_WAN_IFACE, wan_gateway_ip_str, sizeof(wan_gateway_ip_str));
     get_gateway_ip(DEFAULT_LAN_IFACE, lan_gateway_ip, sizeof(lan_gateway_ip));
@@ -695,16 +691,21 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     ip_header->check = 0;
     update_ip_checksum(&ip_header);
 
+
     // Update Ethernet headers for WAN interface
-    memcpy(eth_header->src_mac, wan_mac, 6);
+    uint8_t wan_mac_1[6] = {0x08, 0x00, 0x27, 0x03, 0x44, 0xa4}; // 10.0.2.15
+    memcpy(eth_header->src_mac, wan_mac_1, 6);
+    
+    static uint8_t dst_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02}; // 10.0.2.2
+    memcpy(eth_header->dst_mac, dst_mac, 6); // Set destination MAC to WAN MAC
 
     struct sockaddr_ll dest_addr = {
     .sll_family = AF_PACKET,
     .sll_protocol = htons(ETH_P_ALL),
     .sll_ifindex = if_nametoindex("enp0s3"),  // Replace with WAN interface
     .sll_halen = ETH_ALEN,
-    .sll_addr = {0x08, 0x00, 0x27, 0x03, 0x44, 0xa4} // Broadcast MAC
-    // 08 00 27 03 44 a4
+    .sll_addr = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02} // Broadcast MAC
+    // 08 00 27 03 44 a4  // 10.0.2.15
 };
     // Send the packet to the WAN interface.
     ssize_t sent_bytes = sendto(wan_raw, buffer, len, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
