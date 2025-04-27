@@ -18,7 +18,6 @@
 #include <stdbool.h>
 #include <netinet/ip_icmp.h>
 #include <sys/types.h> 
-#include "helper.h"
 
 #define BUFLEN 512 // Max length of buffer
 #define DHCP_CLIENT_PORT 68
@@ -26,7 +25,7 @@
 #define MAX_THREADS 20
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
-#define DHCP_SERVER_INTERFACE "enp0s3" //change to your interface name 
+#define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
@@ -131,6 +130,11 @@ void append_ln_to_log_file(const char *msg, ...) {
 
 // Main DHCP service function that communicates with router
 void dhcp_main(int rx_fd, int tx_fd) {
+
+
+    pid_t pid = getpid();
+    write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
+
     char buffer[256];
     ssize_t count;
 
