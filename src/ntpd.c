@@ -237,7 +237,7 @@ time_t refresh_time()
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
     // Extract time from packet and update local time
-    unsigned long newTimeSec = ntohll(refresh_packet.xmt >> 32) - NTP_TIMESTAMP_DELTA;
+    unsigned long newTimeSec = ntohl((unsigned int)(refresh_packet.xmt >> 32)) - NTP_TIMESTAMP_DELTA;
 
     printf("Server time: %ld (Unix seconds)\n", newTimeSec);
 
