@@ -1,6 +1,7 @@
 #ifndef DNSD_H
 #define DNSD_H
 
+#include <stdbool.h>
 #define MAX_DN_LENGTH 255
 #define IP_LENGTH 4          /* For IPv4 */
 #define ANS_LENGTH 16        /* DNS answer */
@@ -35,7 +36,7 @@ typedef struct
 typedef struct
 {
     dns_entry entry;                    /* Actual DNS Entry */
-    dns_entry *next;                    /* Used for iterating through used elements of the domain table  */
+    struct dns_bucket *next;            /* Used for iterating through used elements of the domain table  */
 } dns_bucket;
 
 static dns_bucket *domain_table[MAX_ENTRIES];   /* Table contains pointers to buckets that contain the actual dns entry */
@@ -44,7 +45,13 @@ static int lastIndex = 0;
 static int dns_ip = LOOKUP_IP;          /* IP address for recursive DNS queries. Will be stored in network byte order */
 
 void dns_main(int rx_fd, int tx_fd);
-int process_domain(unsigned short offset, char *buffer, char *domain, int index);
-int get_domain(dns_entry *map, int offset, char *buffer);
+void handle_command(int rx_fd, int tx_fd, unsigned char  *command);
+int process_domain(unsigned short offset, unsigned char  *buffer, unsigned char  *domain, int index);
+unsigned long get_hash(unsigned char *domain);
+unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp, bool alias);
+void clean_table(bool shutdown);
+int get_domain(dns_entry *map, int offset, unsigned char  *buffer, bool authority);
+int process_packet(dns_hdr *hdr, unsigned char  *buffer);
+int process_query(dns_hdr *hdr, unsigned char  *buffer);
 
 #endif /* DNSD_H */

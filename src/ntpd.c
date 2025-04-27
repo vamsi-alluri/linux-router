@@ -2,8 +2,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <stdbool.h>
-#include <time.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -36,7 +36,7 @@ void ntp_main(int rx_fd, int tx_fd)
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
     {
         perror("socket");
-        return -1;
+        return;
     }
 
     struct ifreq myreq;
@@ -47,21 +47,21 @@ void ntp_main(int rx_fd, int tx_fd)
     {
         perror("setsockopt");
         close(s);
-        return -1;
+        return;
     }
 
     if (flags = fcntl(s, F_GETFL) < 0)
     {
         perror("F_GETFL");
         close(s);
-        return -1;
+        return;
     }
     flags |= O_NONBLOCK;
     if (fcntl(s, F_SETFL, flags) < 0)
     {
         perror("F_SETFL");
         close(s);
-        return -1;
+        return;
     }
 
     memset((char *)&ser_addr, 0, sizeof(ser_addr));
@@ -73,7 +73,7 @@ void ntp_main(int rx_fd, int tx_fd)
     {
         perror("bind");
         close(s);
-        return -1;
+        return;
     }
 
     // system("clear");
@@ -164,7 +164,7 @@ void ntp_main(int rx_fd, int tx_fd)
                                     + NTP_TIMESTAMP_DELTA); // then convert byte order for 8 byte time
 
             if ((send_len = sendto(s, &out_packet, sizeof(out_packet), 0,
-                                   (struct sockaddr *)&cli_addr, &slen)) < 0)
+                                   (struct sockaddr *)&cli_addr, slen)) < 0)
             {
                 perror("sendto");
                 continue;
@@ -175,7 +175,7 @@ void ntp_main(int rx_fd, int tx_fd)
         }
     }
     close(s);
-    return 0;
+    return;
 }
 
 time_t refresh_time()
@@ -200,11 +200,12 @@ time_t refresh_time()
     struct sockaddr_in saddr;
     memset(&saddr, 0, sizeof(saddr));
     saddr.sin_family = AF_INET;
-    saddr.sin_port = htons(atoi(NTPD_PORT));
+    saddr.sin_port = htons(NTPD_PORT);
     struct hostent *hostinfo = gethostbyname(server_hostname);
     if (hostinfo == 0)
     {
-        perror("invalid host  %s\n", server_hostname);
+        perror(server_hostname);
+        perror(" is invalid host\n");
         return time(NULL);
     }
     saddr.sin_addr.s_addr = *((unsigned int *)(hostinfo->h_addr_list[0]));

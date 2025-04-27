@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdbool.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -35,7 +34,7 @@ void dns_main(int rx_fd, int tx_fd){
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         perror("socket");
-        return -1;
+        return;
     }
 
     struct ifreq myreq;
@@ -45,19 +44,19 @@ void dns_main(int rx_fd, int tx_fd){
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0) {
         perror("setsockopt");
         close(s);
-        return -1;
+        return;
     }
 
     if (flags = fcntl(s, F_GETFL) < 0) {
         perror("F_GETFL");
         close(s);
-        return -1;
+        return;
     }
     flags |= O_NONBLOCK;
     if (fcntl(s, F_SETFL, flags) < 0) {
         perror("F_SETFL");
         close(s);
-        return -1;
+        return;
     }
 
     memset((char *)&ser_addr, 0, sizeof(ser_addr));
@@ -68,7 +67,7 @@ void dns_main(int rx_fd, int tx_fd){
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0) {
         perror("bind");
         close(s);
-        return -1;
+        return;
     }
 
     // system("clear");
@@ -138,7 +137,7 @@ void dns_main(int rx_fd, int tx_fd){
             if (offset < 0) continue;      // There was an error in get_domain so abandon this request
 
             if ((send_len = sendto(s, buffer, offset, 0,
-                                        (struct sockaddr *)&cli_addr, &slen)) < 0) {
+                                        (struct sockaddr *)&cli_addr, slen)) < 0) {
                 perror("sendto");
                 continue;
             }
@@ -158,10 +157,10 @@ void dns_main(int rx_fd, int tx_fd){
         }
     }
     close(s);
-    return 0;
+    return;
 }
 
-void handle_command(int rx_fd, int tx_fd, char *command) {
+void handle_command(int rx_fd, int tx_fd, unsigned char *command) {
     if (strncmp(command, "shutdown", 9) == 0) {
         // Clean shutdown on EOF or explicit command
         clean_table(true);
@@ -226,7 +225,7 @@ void handle_command(int rx_fd, int tx_fd, char *command) {
     }
 }
 
-int process_domain(unsigned short offset, char *buffer, char *domain, int index) {
+int process_domain(unsigned short offset, unsigned char *buffer, unsigned char *domain, int index) {
     while (true) {
         // Is a pointer iff first 2 bits are 1s
         if ((buffer[offset] & 0xC0) == 0xC0) {
@@ -308,7 +307,7 @@ void clean_table(bool shutdown) {
     }
 }
 
-int get_domain(dns_entry *map, int offset, char *buffer, bool authority) {
+int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority) {
     unsigned long index = get_hash(map->domain);
     while (domain_table[index]) {
         if ((strlen(domain_table[index]->entry.domain) == strlen(map->domain)) &&
@@ -437,7 +436,7 @@ int get_domain(dns_entry *map, int offset, char *buffer, bool authority) {
     return 0;
 }
 
-int process_packet(dns_hdr *hdr, char *buffer) {
+int process_packet(dns_hdr *hdr, unsigned char *buffer) {
     memset(hdr, 0, sizeof(dns_hdr));
     
     // Format for DNS header
@@ -549,7 +548,7 @@ int process_packet(dns_hdr *hdr, char *buffer) {
     return offset;
 }
 
-int process_query(dns_hdr *hdr, char *buffer) {
+int process_query(dns_hdr *hdr, unsigned char *buffer) {
 
     /* Process the data of DNS starting at buffer + sizeof(dns_hdr) */
 
@@ -603,7 +602,9 @@ int process_query(dns_hdr *hdr, char *buffer) {
         *(unsigned short*)(buffer + offset + (j * ANS_LENGTH) + 4) = htons(class);
         *(unsigned int*)(buffer + offset + (j * ANS_LENGTH) + 6) = htonl((unsigned int)(map.ttl - time(NULL))); // Trusting this doesnt become negative since the 
         *(unsigned short*)(buffer + offset + (j * ANS_LENGTH) + 10) = htons(IP_LENGTH);
-        for (int k = 0; k < IP_LENGTH; k++) (buffer + offset + (j * ANS_LENGTH))[12 + k] = map.ip[k];
+        for (int k = 0; k < IP_LENGTH; k++) {
+            (buffer + offset + (j * ANS_LENGTH))[12 + k] = map.ip[j][k];
+        }
     }
     hdr->numA = map.numIp;
     offset += hdr->numA * ANS_LENGTH;

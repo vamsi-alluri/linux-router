@@ -115,7 +115,7 @@ void start_service(service_t *svc, void (*entry)(int, int)) {
         entry(svc->router_to_svc[0], svc->svc_to_router[1]);
         close(svc->router_to_svc[0]); // Close pipes before exit
         close(svc->svc_to_router[1]);
-        exit(EXIT_SUCCESS);
+        exit(EXIT_FAILURE);           // If it reaches this point it should be a failure
     } 
     else { // Router process
         close(svc->router_to_svc[0]); // Close unused pipes
