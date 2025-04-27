@@ -18,7 +18,6 @@
 #include <stdbool.h>
 #include <netinet/ip_icmp.h>
 #include <sys/types.h> 
-#include "helper.h"
 
 #define BUFLEN 512 // Max length of buffer
 #define DHCP_CLIENT_PORT 68
