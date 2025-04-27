@@ -297,6 +297,15 @@ char* time_to_fstr(time_t _time, char buffer[26]){
     strftime(*buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&_time));
 }
 
+static void clear_log_file() {
+    FILE *log_file = fopen(log_file_path, "w");
+    if (log_file) {
+        fprintf(log_file, "\n\n");
+        fclose(log_file);
+        append_ln_to_log_file("Log file cleared.");
+    }
+}
+
 static void vappend_ln_to_log_file(const char *msg, va_list args) {
 
     // Clean up the log file if the size is more than 10 MB.
@@ -309,12 +318,8 @@ static void vappend_ln_to_log_file(const char *msg, va_list args) {
         fclose(log_file);
         
         if (file_size > MAX_LOG_SIZE) {
-            log_file = fopen(log_file_path, "w");
-            if (log_file) {
-                fprintf(log_file, "\n\n");
-                fclose(log_file);
-                append_ln_to_log_file("Log file size exceeded %d bytes. Cleared the log file.", MAX_LOG_SIZE);
-            }
+            clear_log_file();
+            append_ln_to_log_file("Log file size exceeded %d bytes.", MAX_LOG_SIZE);
         }
     }
 
@@ -640,13 +645,13 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     memcpy(eth_header->dst_mac, dst_mac, 6); // Set destination MAC to WAN MAC
 
     struct sockaddr_ll dest_addr = {
-    .sll_family = AF_PACKET,
-    .sll_protocol = htons(ETH_P_ALL),
-    .sll_ifindex = if_nametoindex("enp0s3"),  // Replace with WAN interface
-    .sll_halen = ETH_ALEN,
-    .sll_addr = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02} // Broadcast MAC
-    // 08 00 27 03 44 a4  // 10.0.2.15
-};
+        .sll_family = AF_PACKET,
+        .sll_protocol = htons(ETH_P_ALL),
+        .sll_ifindex = if_nametoindex("enp0s3"),  // Replace with WAN interface
+        .sll_halen = ETH_ALEN,
+        .sll_addr = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02} // Broadcast MAC
+        // 08 00 27 03 44 a4  // 10.0.2.15
+    };
     // Send the packet to the WAN interface.
     ssize_t sent_bytes = sendto(wan_raw, buffer, len, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
     if (sent_bytes < 0) {
@@ -795,16 +800,17 @@ void nat_main(int router_rx, int router_tx, int verbose_l) {
             int count = read(rx_fd, command_from_router, sizeof(command_from_router) - 1);
             
             // Process router command
-            if (read(rx_fd, command_from_router, sizeof(command_from_router)) <= 0 || strcmp(command_from_router, "shutdown") == 0) {
+            if (count <= 0 || strcmp(command_from_router, "shutdown") == 0) {
                 append_ln_to_log_file("Received shutdown command from router: Shutting down.");
                 send_to_router("NAT: Shutting down.", 13);
                 break;
             } 
-            //else if (strcmp(buffer, "something") == 0) {
-                //char status_msg[256];
-                //snprintf(status_msg, sizeof(status_msg), "DHCP: Active leases: %d, Active threads: %d\n", countActiveLeases());
-                //write(tx_fd, buffer, count);
-            //}
+            else if (strcmp(command_from_router, "clear logs") == 0) {
+                clear_log_file();
+                append_ln_to_log_file("[Router Command] clear logs");
+                append_ln_to_log_file(NULL);
+                write(tx_fd, "Cleared logs.\n", count);
+            }
             else {
                 char msg[300];
                 snprintf(msg, sizeof(msg), "NAT: Unknown command '%s'\n", command_from_router);

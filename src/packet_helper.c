@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <string.h>
+#include <stdlib.h>
 #include "packet_helper.h"
 
 
@@ -97,6 +98,7 @@ uint16_t compute_checksum(const void* data, size_t len) {
 
 uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len) {
     
+    #pragma pack(push, 1) 
     struct {
         uint32_t src_addr;  // SRC IP ADDRESS
         uint32_t dst_addr;  // DST IP ADDRESS
@@ -105,7 +107,8 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
         uint16_t tcp_len;   // TCP PACKET (HEADER + DATA) LENGTH
     } pseudo_header;        // ONLY used for checksum calculation and NOT used in actual packet creation.
     // Reference: https://www.baeldung.com/cs/pseudo-header-tcp#the-pseudo-header-in-tcpip
-
+    
+    #pragma pack(pop)
     pseudo_header.src_addr = ip->saddr;
     pseudo_header.dst_addr = ip->daddr;
     pseudo_header.zeros = 0;
@@ -129,7 +132,7 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
 uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len) {
     udp->check = 0;
     
-    // Pseudo-header for checksum calculation
+    #pragma pack(push, 1)
     struct {
         uint32_t src_addr;
         uint32_t dst_addr;
@@ -137,25 +140,29 @@ uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, co
         uint8_t protocol;
         uint16_t udp_len;
     } pseudo_header;
+    #pragma pack(pop)
 
     pseudo_header.src_addr = ip->saddr;
     pseudo_header.dst_addr = ip->daddr;
     pseudo_header.zeros = 0;
     pseudo_header.protocol = IPPROTO_UDP;
-    pseudo_header.udp_len = udp->len;
+    pseudo_header.udp_len = udp->len;  // Already in network byte order
 
-    // Calculate checksum over pseudo-header
-    uint32_t sum = compute_checksum(&pseudo_header, sizeof(pseudo_header));
+    // Combine all components into a single buffer
+    size_t total_len = sizeof(pseudo_header) + sizeof(struct udp_header) + payload_len;
+    uint8_t *buf = malloc(total_len);
+    
+    memcpy(buf, &pseudo_header, sizeof(pseudo_header));
+    memcpy(buf + sizeof(pseudo_header), udp, sizeof(struct udp_header));
+    memcpy(buf + sizeof(pseudo_header) + sizeof(struct udp_header), payload, payload_len);
 
-    // Add the UDP header and payload
-    sum += compute_checksum(udp, sizeof(struct udp_header));
-    sum += compute_checksum(payload, payload_len);
-
-    while (sum >> 16) {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-
-    return ~sum;
+    // Compute checksum over the entire buffer
+    uint16_t checksum = compute_checksum(buf, total_len);
+    free(buf);
+    
+    return checksum;
 }
+
+
 
 
