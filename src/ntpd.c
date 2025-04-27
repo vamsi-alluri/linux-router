@@ -117,7 +117,7 @@ void ntp_main(int rx_fd, int tx_fd)
                     if (buffer[i] == '\n')
                     {
                         command[pos] = '\0';
-                        handle_command(rx_fd, tx_fd, command);
+                        handle_ntp_command(rx_fd, tx_fd, command);
                         pos = 0;
                     }
                     else
@@ -253,7 +253,7 @@ time_t refresh_time()
     return time(NULL);
 }
 
-void handle_command(int rx_fd, int tx_fd, char *command)
+void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
 {
     // Handle each command and write reply to tx_fd
     if (strncmp(command, "shutdown", 9) == 0)

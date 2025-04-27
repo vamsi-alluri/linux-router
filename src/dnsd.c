@@ -105,7 +105,7 @@ void dns_main(int rx_fd, int tx_fd){
                 for (int i = 0; i < count; i++) {
                     if (buffer[i] == '\n') {
                         command[pos] = '\0';
-                        handle_command(rx_fd, tx_fd, command);
+                        handle_dns_command(rx_fd, tx_fd, command);
                         pos = 0;
                     }
                     else {
@@ -160,7 +160,7 @@ void dns_main(int rx_fd, int tx_fd){
     return;
 }
 
-void handle_command(int rx_fd, int tx_fd, unsigned char *command) {
+void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
     if (strncmp(command, "shutdown", 9) == 0) {
         // Clean shutdown on EOF or explicit command
         clean_table(true);

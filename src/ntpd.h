@@ -22,6 +22,6 @@ static int refresh_interval;
 
 void ntp_main(int rx_fd, int tx_fd);
 time_t refresh_time();
-void handle_command(int rx_fd, int tx_fd, char *command);
+void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command);
 
 #endif /* NTPD_H */
