@@ -26,7 +26,7 @@
 #define MAX_THREADS 20
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
-#define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
+#define DHCP_SERVER_INTERFACE "enp0s3" //change to your interface name 
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
@@ -652,7 +652,7 @@ bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))) 
     memcpy(send_buf, &icmp_hdr, sizeof(icmp_hdr));
 
     // Calculate ICMP checksum
-    icmp_hdr.checksum = ip_checksum(send_buf, sizeof(send_buf));
+    icmp_hdr.checksum = htons( ip_checksum(send_buf, sizeof(send_buf)) );
 
     // Copy header with calculated checksum back into the buffer
     memcpy(send_buf, &icmp_hdr, sizeof(icmp_hdr));
@@ -1272,7 +1272,7 @@ void send_dhcp_raw(int raw_sock,
     ip->protocol = IPPROTO_UDP;
     ip->saddr = src_ip;
     ip->daddr = dst_ip;
-    ip->check = ip_checksum(ip, sizeof(*ip));
+    ip->check = htons(ip_checksum(ip, sizeof(*ip)) );
     
     struct udphdr *udp = (struct udphdr *)(buf + sizeof(*eth) + sizeof(*ip));
     udp->source = htons(DHCP_SERVER_PORT);
@@ -1294,7 +1294,7 @@ void send_dhcp_raw(int raw_sock,
         uint16_t udp_len_n = htons(udp_len);
         memcpy(pseudo_buf + 10, &udp_len_n, 2);
         memcpy(pseudo_buf + 12, udp, udp_len);
-        udp->check = ip_checksum(pseudo_buf, pseudo_header_len);
+        udp->check = htons( ip_checksum(pseudo_buf, pseudo_header_len) );
         if (udp->check == 0) udp->check = 0xFFFF;
         free(pseudo_buf);
     } else {
