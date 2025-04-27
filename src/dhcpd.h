@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 #include <time.h>
+#include <stdio.h>
+#include <unistd.h>
 
 void dhcp_main(int rx_fd, int tx_fd);
 
@@ -60,6 +62,7 @@ typedef struct
     time_t lease_start; /* Lease start time */
     time_t lease_end;   /* Lease end time */
     int active;         /* Whether lease is active */
+    time_t conflict_detected_time; /* Time when a conflict was last detected */
 } dhcp_lease;
 
 #endif /* DHCPD_H */
