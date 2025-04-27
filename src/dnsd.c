@@ -102,7 +102,7 @@ void dns_main(int rx_fd, int tx_fd){
             char command[256];
             int pos = 0;
 
-            while ((count = read(rx_fd, buffer, sizeof(buffer))) > 0) {
+            if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0) {
                 for (int i = 0; i < count; i++) {
                     if (buffer[i] == '\n') {
                         command[pos] = '\0';
@@ -162,10 +162,10 @@ void dns_main(int rx_fd, int tx_fd){
 }
 
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
-    if (strncmp(command, "shutdown", 9) == 0) {
+    if (strcmp(command, "shutdown") == 0) {
         // Clean shutdown on EOF or explicit command
         clean_table(true);
-        write(tx_fd, "DNS: Shutting down\n", 19);
+        write(tx_fd, "DNS: Acknowledged shutdown command.\n", 19);
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS);

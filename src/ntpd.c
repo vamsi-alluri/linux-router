@@ -111,7 +111,7 @@ void ntp_main(int rx_fd, int tx_fd)
             char command[256];
             int pos = 0;
 
-            while ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
+            if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
                 for (int i = 0; i < count; i++)
                 {
@@ -257,10 +257,10 @@ time_t refresh_time()
 void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
 {
     // Handle each command and write reply to tx_fd
-    if (strncmp(command, "shutdown", 9) == 0)
+    if (strcmp(command, "shutdown") == 0)
     {
         // Clean shutdown on EOF or explicit command
-        write(tx_fd, "NTP: Shutting down\n", 19);
+        write(tx_fd, "NTP: Acknowledged shutdown command.\n", 19);
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS);
