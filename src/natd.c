@@ -555,64 +555,48 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
 
         case UDP_IP_TYPE:{
-            // Extraction.
+            // Extraction
             struct udp_header *udp_h = extract_udp_header_from_ipv4_packet(ip_packet);
+            append_ln_to_log_file("NAT: Outbound UDP packet.");
             uint16_t udp_len_host = ntohs(udp_h->len);
-            
+            append_ln_to_log_file("NAT: Outbound UDP packet.");
+        
             size_t udp_payload_len = (udp_len_host > sizeof(struct udp_header)) 
                                ? (udp_len_host - sizeof(struct udp_header)) 
                                : 0;
 
-            
-            uint8_t udp_payload[udp_payload_len];
-            memcpy(udp_payload, &ip_packet->payload + sizeof(struct udp_header), udp_payload_len); // Copy UDP payload
+            // CORRECTED: Remove & from ip_packet->payload
+            const uint8_t *udp_payload = (const uint8_t *)(udp_h + 1); // Point to payload after UDP header
 
             uint16_t received_check = ntohs(udp_h->check);
-            udp_h->check = 0; // Set checksum to 0 for calculation.
+            udp_h->check = 0;
+            // CORRECTED: Remove & from ip_header and udp_h
             uint16_t udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
-            append_ln_to_log_file("UDP checksum before any change: 0x%04" PRIx16 ", received checksum value: 0x%04" PRIx16, udp_check, received_check);
+        
+            // Handle zero checksum special case (RFC 768)
+            if (udp_check == 0) udp_check = 0xFFFF;
+        
+            append_ln_to_log_file("UDP checksum before any change: 0x%04" PRIx16 ", received checksum value: 0x%04" PRIx16, 
+                                ntohs(udp_check), received_check);
 
-            if (udp_h->sport == NULL) {
-                append_ln_to_log_file("[Error] Failed to extract UDP header.");
-                return;
-            }
-
-            incoming_packet_details->orig_port = ntohs(udp_h->sport);
-            dport = ntohs(udp_h->dport);
-
-            char src_ip_str[INET_ADDRSTRLEN];
-            char dst_ip_str[INET_ADDRSTRLEN];
-          
-            inet_ntop(AF_INET, &incoming_packet_details->orig_ip, src_ip_str, INET_ADDRSTRLEN);
-            inet_ntop(AF_INET, &ip_header->daddr, dst_ip_str, INET_ADDRSTRLEN);
-
-            append_ln_to_log_file("Before processing: %s:%u -> %s:%u", src_ip_str, incoming_packet_details->orig_port, dst_ip_str, dport);
-
+            // Translation:
             translated_nat_entry = enrich_entry(incoming_packet_details);
             if (translated_nat_entry == NULL) {
                 append_ln_to_log_file("[Error] Failed to enrich entry.");
                 return;
             }
 
-            // Translation:
             ip_header->saddr = translated_nat_entry->trans_ip;
-
-            udp_payload[udp_payload_len];
-            memcpy(udp_payload, &ip_packet->payload + sizeof(struct udp_header), udp_payload_len); // Copy UDP payload
             
             udp_h->sport = htons(translated_nat_entry->trans_port);
             udp_h->dport = htons(dport);
-            
-            udp_check = compute_udp_checksum(&ip_header, &udp_h, udp_payload, udp_payload_len);
-            
+        
+            // Recompute checksum with new ports and IP
+            udp_h->check = 0;
+            udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
+            if (udp_check == 0) udp_check = 0xFFFF;  // Handle zero case
+        
             udp_h->check = udp_check;
-            
-            uint16_t udp_check_1 = compute_udp_checksum(&ip_header, &udp_h, udp_payload, udp_payload_len);
-
-            if (udp_check != udp_check_1) {
-                append_ln_to_log_file("[Error] UDP checksum mismatch on recalculation: %u != %u", udp_check, udp_check_1);
-            }
-
             break;
         }
         default:

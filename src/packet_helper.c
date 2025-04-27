@@ -106,6 +106,7 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
         uint8_t protocol;   // TCP (6) OR UDP, apparently UDP can also use pseudo header.
         uint16_t tcp_len;   // TCP PACKET (HEADER + DATA) LENGTH
     } pseudo_header;        // ONLY used for checksum calculation and NOT used in actual packet creation.
+    #pragma pack(pop)
     // Reference: https://www.baeldung.com/cs/pseudo-header-tcp#the-pseudo-header-in-tcpip
     
     #pragma pack(pop)
@@ -130,7 +131,6 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
 }
 
 uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len) {
-    udp->check = 0;
     
     #pragma pack(push, 1)
     struct {
