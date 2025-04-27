@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <net/if.h>
 
 #define NTP_TIMESTAMP_DELTA 2208988800ull // Difference between UNIX and NTP start time
 #define NTPD_PORT 123                     // Well-known port

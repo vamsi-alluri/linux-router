@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
+#include <net/if.h>
 
 #define DNS_PORT 53              // Well-known port
 #define LOOKUP_PORT 30000        // Arbitrary unused port & ignored by NAT
