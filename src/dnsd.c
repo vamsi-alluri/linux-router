@@ -86,9 +86,11 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
 
 void dns_main(int rx_fd, int tx_fd){
     // Send the PID back to the parent for processing
+    append_ln_to_log_file_dns("i am alive");
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
 
+    append_ln_to_log_file_dns("i am also alive");
     memset(domain_table, 0, MAX_ENTRIES * sizeof(dns_bucket *));   // Clear domain_table
 
     // Add a dummy value to the table at 0 that will be used for iterating through it
