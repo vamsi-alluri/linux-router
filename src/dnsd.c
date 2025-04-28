@@ -141,7 +141,7 @@ void dns_main(int rx_fd, int tx_fd){
     }
 
     // system("clear");
-    append_ln_to_log_file_ntp("...This is DNS server (Non-Blocking Version) listening on port %d...\n\n", DNS_PORT);
+    append_ln_to_log_file_dns("...This is DNS server (Non-Blocking Version) listening on port %d...\n\n", DNS_PORT);
 
     struct timeval tv = {5, 0}; // 5 seconds, 0 microseconds
     fd_set rfds;
@@ -200,7 +200,7 @@ void dns_main(int rx_fd, int tx_fd){
                 continue;
             }
 
-            append_ln_to_log_file_ntp("Received packet from %s, port number:%d\n",
+            append_ln_to_log_file_dns("Received packet from %s, port number:%d\n",
                     inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
             dns_hdr hdr;
@@ -218,12 +218,12 @@ void dns_main(int rx_fd, int tx_fd){
             if (hdr.rcd != 0) {
 
                 // Packet is identical to as it was received but with the Not implemented flag triggered.
-                append_ln_to_log_file_ntp("Sent failed packet back to %s, port number:%d\n",
+                append_ln_to_log_file_dns("Sent failed packet back to %s, port number:%d\n",
                         inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
             }
             // If implemented, sent back an actual response
             else {
-                append_ln_to_log_file_ntp("Sent packet back to %s, port number:%d\n",
+                append_ln_to_log_file_dns("Sent packet back to %s, port number:%d\n",
                         inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
             }
         }
@@ -392,7 +392,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
         index++;
     }
 
-    append_ln_to_log_file_ntp("Not found in table...\n");
+    append_ln_to_log_file_dns("Not found in table...\n");
 
     // If recursion is not desired
     if (authority) {
@@ -400,7 +400,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
     }
     
     // If we reach this point we need to query upstream for the IP addresses
-    append_ln_to_log_file_ntp("Now sending upstream...\n");
+    append_ln_to_log_file_dns("Now sending upstream...\n");
 
 
     // Here is the socket setup for sending/receiving DNS queries to/from the internet
@@ -445,7 +445,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
         append_ln_to_log_file_dns("sendto-upstream");
         return -1;
     }
-    append_ln_to_log_file_ntp("Sent packet to upstream %s, port number:%d\n",
+    append_ln_to_log_file_dns("Sent packet to upstream %s, port number:%d\n",
             inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
 
     // TODO: in case idk u can uncomment
@@ -457,7 +457,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
         return -1;
     }
 
-    append_ln_to_log_file_ntp("Received packet from upstream %s, port number:%d\n",
+    append_ln_to_log_file_dns("Received packet from upstream %s, port number:%d\n",
             inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
     
     // TODO: process packet to get the domain and array of ips
