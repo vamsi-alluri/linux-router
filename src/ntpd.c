@@ -13,6 +13,7 @@
 
 #define NTP_TIMESTAMP_DELTA 2208988800ull // Difference between UNIX and NTP start time
 #define NTPD_PORT 123                     // Well-known port
+#define REFRESH_PORT 32432                // Arbitrary unused port & ignored by NAT
 #define DEFAULT_REFRESH 14400             // 4 hours in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 
@@ -201,7 +202,7 @@ time_t refresh_time()
     struct sockaddr_in saddr;
     memset(&saddr, 0, sizeof(saddr));
     saddr.sin_family = AF_INET;
-    saddr.sin_port = htons(NTPD_PORT);
+    saddr.sin_port = htons(REFRESH_PORT);
     struct hostent *hostinfo = gethostbyname(server_hostname);
     if (hostinfo == 0)
     {

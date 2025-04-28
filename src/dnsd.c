@@ -11,7 +11,7 @@
 #include <net/if.h>
 
 #define DNS_PORT 53              // Well-known port
-#define LOOKUP_PORT 30000        // Arbitrary unused port & ignored by NAT
+#define LOOKUP_PORT 34534        // Arbitrary unused port & ignored by NAT
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 
@@ -62,7 +62,7 @@ void dns_main(int rx_fd, int tx_fd){
 
     memset((char *)&ser_addr, 0, sizeof(ser_addr));
     ser_addr.sin_family = AF_INET;
-    ser_addr.sin_port = htons(DNS_PORT);
+    ser_addr.sin_port = htons(LOOKUP_PORT);
     ser_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0) {
