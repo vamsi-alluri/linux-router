@@ -129,8 +129,15 @@ void append_ln_to_log_file(const char *msg, ...) {
 }
 
 // Main DHCP service function that communicates with router
-void dhcp_main(int rx_fd, int tx_fd) {
+void dhcp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir) {
 
+    if (chdir(parent_dir) < 0) {
+        append_ln_to_log_file("Error changing directory to  %s\n", parent_dir);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        append_ln_to_log_file("Changed working directory to %s\n", cwd);
+    }
 
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 

@@ -86,7 +86,15 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
     // va_end(args);
 }
 
-void dns_main(int rx_fd, int tx_fd){
+void dns_main(int rx_fd, int tx_fd, int verbose, char * parent_dir){
+
+    if (chdir(parent_dir) < 0) {
+        append_ln_to_log_file_dns("Error changing directory to  %s\n", parent_dir);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        append_ln_to_log_file_dns("Changed directory to  %s\n", cwd);
+    }
 
     read_from_router_pipe = rx_fd;
     write_to_router_pipe = tx_fd;

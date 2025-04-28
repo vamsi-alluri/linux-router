@@ -45,7 +45,7 @@ static dns_bucket *domain_table[MAX_ENTRIES];   /* Table contains pointers to bu
 static int lastIndex = 0;
 static int dns_ip = LOOKUP_IP;          /* IP address for recursive DNS queries. Will be stored in network byte order */
 
-void dns_main(int rx_fd, int tx_fd);
+void dns_main(int rx_fd, int tx_fd, int verbose, char * parent_dir);
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char  *command);
 int process_domain(unsigned short offset, unsigned char  *buffer, unsigned char  *domain, int index);
 unsigned long get_hash(unsigned char *domain);

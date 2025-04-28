@@ -30,7 +30,7 @@
 #define DEFAULT_LAN_IFACE "enp0s8"      // Configurable by command.
 #define DEFAULT_WAN_IFACE "enp0s3"      // Configurable by command.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_LOG_PATH "/home/osboxes/cs536/router/logs/nat_log.txt"
+#define DEFAULT_LOG_PATH "/tmp/logs/nat_log.txt"
 
 #define TCP_IP_TYPE 6
 #define UDP_IP_TYPE 17
@@ -913,7 +913,17 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     packet_details.orig_port = sport;
 }
 
-void nat_main(int router_rx, int router_tx, int verbose_l) {
+void nat_main(int router_rx, int router_tx, int verbose_l, char * parent_dir) {
+
+    if (chdir(parent_dir) < 0) {
+        append_ln_to_log_file_nat("Error changing directory to  %s\n", parent_dir);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        append_ln_to_log_file_nat("Changed working directory to %s\n", cwd);
+    }
+    
+
     rx_fd = router_rx;
     tx_fd = router_tx;
     verbose = verbose_l;
