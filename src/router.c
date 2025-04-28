@@ -44,6 +44,7 @@ typedef struct {
 
 void print_verboseln(char *message, ...);
 void print_running_services(service_t *services);
+bool is_service_running(service_t *svc);
 
 /* ================= Process Creation ================= */
 static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
@@ -197,10 +198,17 @@ void cleanup_services(service_t *services) {
     // Wait for services to exit
     int status;
     for (int i = 0; i < NUM_SERVICES; i++) {
-        if (services[i].running) {
+        if (is_service_running(services + i) == true) {
             waitpid(services[i].pid, &status, 0);
-            printf("Service %d exited\n", i);
+            sleep(5);
+            if (is_service_running(services + i)) {
+                printf("Forcibly Killed Service %s (%d), PID %d\n", services[i].name, i, services[i].pid);
+                kill(services[i].pid, 9);
+            }
+            
         }
+        printf("Service %d exited\n", i);
+
     }
 }
 
