@@ -57,5 +57,6 @@ int process_query(dns_hdr *hdr, unsigned char  *buffer);
 void append_ln_to_log_file_dns(const char *msg, ...);
 void append_ln_to_log_file_dns_verbose(const char *msg, ...);
 static void vappend_ln_to_log_file_dns(const char *msg, va_list args);
+static void clear_log_file_dns();
 
 #endif /* DNSD_H */

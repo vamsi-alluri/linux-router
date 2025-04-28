@@ -27,5 +27,6 @@ void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command);
 void append_ln_to_log_file_ntp(const char *msg, ...);
 void append_ln_to_log_file_ntp_verbose(const char *msg, ...);
 static void vappend_ln_to_log_file_ntp(const char *msg, va_list args);
+static void clear_log_file_ntp();
 
 #endif /* NTPD_H */

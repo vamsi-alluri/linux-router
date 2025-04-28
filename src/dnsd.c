@@ -19,6 +19,15 @@
 
 static char *log_file_path = DEFAULT_LOG_PATH;
 
+static void clear_log_file_dns() {
+    FILE *log_file = fopen(log_file_path, "w");
+    if (log_file) {
+        fprintf(log_file, "\n\n");
+        fclose(log_file);
+        append_ln_to_log_file_dns("Log file cleared.");
+    }
+}
+
 static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
 
     // Clean up the log file if the size is more than 10 MB.
@@ -31,7 +40,7 @@ static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
         fclose(log_file);
         
         if (file_size > MAX_LOG_SIZE) {
-            clear_log_file();
+            clear_log_file_dns();
             append_ln_to_log_file_dns("Log file size exceeded %d bytes.", MAX_LOG_SIZE);
         }
     }
