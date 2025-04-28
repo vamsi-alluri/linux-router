@@ -171,8 +171,8 @@ void ntp_main(int rx_fd, int tx_fd)
             append_ln_to_log_file_ntp("select");
             continue;
         }
-        else if (select_ret == 0)
-            continue; // Timeout
+        // else if (select_ret == 0)
+        //     continue; // Timeout
 
         // For reading & processing commands from router
         if (FD_ISSET(rx_fd, &rfds))
@@ -187,19 +187,22 @@ void ntp_main(int rx_fd, int tx_fd)
             if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
                 append_ln_to_log_file_ntp("I read something on rx_fd");
-                for (int i = 0; i < count; i++)
-                {
-                    if (buffer[i] == '\n')
-                    {
-                        command[pos] = '\0';
-                        handle_ntp_command(rx_fd, tx_fd, command);
-                        pos = 0;
-                    }
-                    else
-                    {
-                        command[pos++] = buffer[i];
-                    }
-                }
+                append_ln_to_log_file_ntp("count is %d, buffer is %s", count, buffer);
+                // for (int i = 0; i < count; i++)
+                // {
+                //     if (buffer[i] == '\n')
+                //     {
+                //         command[pos] = '\0';
+                //         handle_ntp_command(rx_fd, tx_fd, command);
+                //         pos = 0;
+                //     }
+                //     else
+                //     {
+                //         command[pos++] = buffer[i];
+                //     }
+                // }
+                command[count - 1] = '\0';
+                handle_ntp_command(rx_fd, tx_fd, buffer);
             }
             else {
                handle_ntp_command(rx_fd, tx_fd, "shutdown"); 
@@ -357,6 +360,7 @@ void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
     // Handle each command and write reply to tx_fd
     if (strcmp(command, "shutdown") == 0)
     {
+        append_ln_to_log_file_ntp("I am shutting down");
         // Clean shutdown on EOF or explicit command
         write(tx_fd, "NTP: Acknowledged shutdown command.\n", 19);
         close(rx_fd); // Close pipes before exit
