@@ -164,7 +164,9 @@ void ntp_main(int rx_fd, int tx_fd)
             last_refresh = refresh_time();
         }
 
-        if (select_ret = select(s + 1, &rfds, NULL, NULL, &tv) < 0)
+        int max_fd = rx_fd;
+        if (s > max_fd) max_fd = s;
+        if (select_ret = select(max_fd + 1, &rfds, NULL, NULL, &tv) < 0)
         {
             append_ln_to_log_file_ntp("select");
             continue;
