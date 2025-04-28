@@ -45,6 +45,10 @@
 #define CLEANUP_INTERVAL_DEFAULT 5 * 60         // 5 min in seconds.
 #define ARPOP_REQUEST 1
 #define ARPOP_REPLY   2
+#define ARP_CACHE_TIMEOUT 300  // 5 minutes
+#define MAX_BUFFERED_PACKETS 64
+
+typedef enum { INBOUND, OUTBOUND } packet_direction_t;
 
 // Reserved ports (Don't use these for assigning outbound ports to WAN.)
 // 22 to ssh into the linux machine.
@@ -100,6 +104,92 @@ uint32_t hash_key(uint32_t ip, uint16_t port, uint8_t proto) {
     h = ((h >> 16) ^ h) * 0x45d9f3b;  
     return (h >> 16) ^ h;  
 }  
+
+const char* protocol_to_str(uint8_t proto) {
+    switch(proto) {
+        case 6: return "TCP";
+        case 17: return "UDP";
+        case 1: return "ICMP";
+        default: return "OTHER";
+    }
+}
+
+// TODO: Fix formatting.
+/* 
+Example: Current situation:
+root@router# nat:entries
+Orig IP         O_Port  Trans IP        T_Port  Proto   Last Used            Custom Timeout (sec)
+---------------------------------------------------------------------------------------------
+192.168.20.2    52730   10.0.2.15       32770   UDP     2025-04-h+���
+28 14:29:54  0                  <- This new line shouldn't be here.
+192.168.20.2    50954   10.0.2.15       32769   UDP     2025-04-28 14:29:44  0              
+192.168.20.2    56164   10.0.2.15       32768   UDP     2025-04-28 14:29:34  0              
+192.168.20.2    56915   10.0.2.15       3h+���
+2771   UDP     2025-04-28 14:29:59  0 
+Every time it fails, it prints h+��� before breaking the line. Need to print in hex to see what's happening.
+*/
+void print_nat_table_to_fd() {
+    char msg[512];
+    int count = 0;
+
+    // Print header line
+    count = snprintf(msg, sizeof(msg),
+               "%-15s %-7s %-15s %-7s %-7s %-20s %-15s\n"
+               "---------------------------------------------------------------------------------------------\n",
+               "Orig IP", "O_Port", "Trans IP", "T_Port", "Proto", "Last Used", "Custom Timeout (sec)");
+    if (count > 0) {
+        msg[count+1] = "\0";
+        write(tx_fd, msg, count);
+    }
+    
+    // Iterate through each entry and write one line at a time
+    for (int i = 0; i < NAT_TABLE_SIZE; i++) {
+        nat_bucket *bucket = nat_table[i];
+        while (bucket) {
+            struct nat_entry *e = bucket->entry;
+            char orig_ip_str[INET_ADDRSTRLEN];
+            char trans_ip_str[INET_ADDRSTRLEN];
+            char last_used_str[30] = {0};  // Fixed array size with initialization
+            
+            // Safe IP conversion
+            if (!inet_ntop(AF_INET, &e->orig_ip, orig_ip_str, INET_ADDRSTRLEN)) {
+                strncpy(orig_ip_str, "Invalid IP", INET_ADDRSTRLEN-1);
+                orig_ip_str[INET_ADDRSTRLEN-1] = '\0';
+            }
+            if (!inet_ntop(AF_INET, &e->trans_ip, trans_ip_str, INET_ADDRSTRLEN)) {
+                strncpy(trans_ip_str, "Invalid IP", INET_ADDRSTRLEN-1);
+                trans_ip_str[INET_ADDRSTRLEN-1] = '\0';
+            }
+            
+            // Get protocol string
+            const char* proto_str = protocol_to_str(e->protocol);
+            
+            // Safe timestamp formatting
+            struct tm *tm_info = localtime(&e->last_used);
+            if (tm_info) {
+                strftime(last_used_str, sizeof(last_used_str), "%Y-%m-%d %H:%M:%S", tm_info);
+            } else {
+                strncpy(last_used_str, "Invalid time", sizeof(last_used_str));
+            }
+            
+            // Format entry and write to fd
+            count = snprintf(msg, sizeof(msg),
+                     "%-15s %-7u %-15s %-7u %-7s %-20s %-15u\n",
+                     orig_ip_str, e->orig_port, trans_ip_str, e->trans_port, 
+                     proto_str, last_used_str, e->custom_timeout);
+            
+            if (count > 0) {
+                msg[count+1] = "\0";
+                write(tx_fd, msg, count);
+            }
+            
+            bucket = bucket->next;
+        }
+    }
+}
+
+
+
 struct nat_entry* find_by_original(struct nat_entry *details) {
     if (!details) return NULL;
 
@@ -122,95 +212,165 @@ struct nat_entry* find_by_original(struct nat_entry *details) {
             struct in_addr addr = {.s_addr = b->entry->trans_ip};
             inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN);
 
-            append_ln_to_log_file_nat("Found entry: %s:%u", ip_str, b->entry->trans_port);
+            append_ln_to_log_file_nat("Found original entry: %s:%u", ip_str, b->entry->trans_port);
             return b->entry;
         }
     }
     return NULL;
 }
 
-// Not sure yet why I created this function. We'll get to know as I implement WAN to LAN comms.
-struct nat_entry* find_by_translated(struct nat_entry *details) {  
-    if (!details) return NULL;
+// Linear search through all NAT entries for a translated match
+struct nat_entry* find_by_translated_linear(struct nat_entry *details) {
+    // Debug log the search target
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &details->trans_ip, ip_str, INET_ADDRSTRLEN);
+    append_ln_to_log_file_nat("Searching ALL entries for translated: %s:%u", 
+                            ip_str, details->trans_port);
     
-    uint32_t h = hash_key(details->trans_ip, details->trans_port, details->protocol) % NAT_TABLE_SIZE;  
-    for (struct nat_bucket *b = nat_table[h]; b != NULL; b = b->next) {  
-        if (b->entry->trans_ip == details->trans_ip &&  
-            b->entry->trans_port == details->trans_port &&  
-            b->entry->protocol == details->protocol) {  
-            b->entry->last_used = time(NULL);  
-            return b->entry;  
-        }  
-    }  
+    // Search ALL buckets and entries
+    for (int i = 0; i < NAT_TABLE_SIZE; i++) {
+        struct nat_bucket *bucket = nat_table[i];
+        while (bucket) {
+            // Log each comparison to see what's happening
+            char entry_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &bucket->entry->trans_ip, entry_ip, INET_ADDRSTRLEN);
+            append_ln_to_log_file_nat("Comparing with entry: %s:%u", 
+                                   entry_ip, bucket->entry->trans_port);
+            
+            // Check for match
+            if (bucket->entry->trans_ip == details->trans_ip && 
+                bucket->entry->trans_port == details->trans_port &&
+                bucket->entry->protocol == details->protocol) {
+                
+                // Update timestamp
+                bucket->entry->last_used = time(NULL);
+                
+                // Log the success
+                char orig_ip[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &bucket->entry->orig_ip, orig_ip, INET_ADDRSTRLEN);
+                append_ln_to_log_file_nat("Found translated entry: %s:%u", 
+                                       orig_ip, bucket->entry->orig_port);
+                return bucket->entry;
+            }
+            bucket = bucket->next;
+        }
+    }
+    return NULL;
+}
+
+
+struct nat_entry* find_by_translated(struct nat_entry *details) {
+    uint32_t h = hash_key(details->trans_ip, details->trans_port, details->protocol) % NAT_TABLE_SIZE;
+    struct nat_bucket *bucket = nat_table[h];
+    
+    while (bucket) {
+        if (bucket->entry->trans_ip == details->trans_ip && 
+            bucket->entry->trans_port == details->trans_port &&
+            bucket->entry->protocol == details->protocol) {
+            
+            // Update last_used timestamp
+            bucket->entry->last_used = time(NULL);
+
+            char ip_str[INET_ADDRSTRLEN];
+            struct in_addr addr = {.s_addr = bucket->entry->orig_ip};
+            inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN);
+
+            append_ln_to_log_file_nat("Found translated entry: %s:%u", ip_str, bucket->entry->orig_port);
+            return bucket->entry;
+        }
+        bucket = bucket->next;
+    }
     return NULL;
 }
 
 // Entry enrichment function using structs
-struct nat_entry* enrich_entry(struct nat_entry *details) {  
+struct nat_entry* enrich_entry(struct nat_entry *details, packet_direction_t direction) {  
     if (!details) return NULL;
 
+    struct nat_entry *existing = NULL;
+    char src_ip_str[INET_ADDRSTRLEN], dst_ip_str[INET_ADDRSTRLEN];
 
-    // Try to find existing entry first
-    struct nat_entry *existing = find_by_original(details);
+    if (direction == OUTBOUND){
+        // Try to find existing entry first
+        existing = find_by_original(details);
 
-    // Temporarily disabling NAT look up.
-    // existing = NULL
-    if (existing) {
-        char ip_str[INET_ADDRSTRLEN];
-        struct in_addr addr = {.s_addr = existing->trans_ip};
-        inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN);
+        if (existing) {
+            // Found existing outbound translation
+            inet_ntop(AF_INET, &existing->orig_ip, src_ip_str, INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, &existing->trans_ip, dst_ip_str, INET_ADDRSTRLEN);
+            
+            append_ln_to_log_file_nat("NAT: Using existing outbound entry: %s:%u -> %s:%u",
+                                    src_ip_str, existing->orig_port,
+                                    dst_ip_str, existing->trans_port);
+            return existing;
+        }
         
-        append_ln_to_log_file_nat("NAT: Existing entry found: %s:%u -> %s:%u",
-                                inet_ntoa(*(struct in_addr*)&details->orig_ip),
-                                details->orig_port,
-                                ip_str,
-                                existing->trans_port);
-        return existing;
+        // Create new outbound entry
+        struct nat_entry *new_entry = malloc(sizeof(struct nat_entry));
+        if (!new_entry) {
+            append_ln_to_log_file_nat("NAT: Failed to allocate new outbound entry");
+            return NULL;
+        }
+        
+        *new_entry = (struct nat_entry){
+            .orig_ip = details->orig_ip,
+            .orig_port = details->orig_port,
+            .trans_ip = wan_machine_ip,
+            .trans_port = allocate_port(details->protocol),
+            .protocol = details->protocol,
+            .last_used = time(NULL),
+            .custom_timeout = NULL
+        };
+        
+        // Log creation and add to hash table
+        inet_ntop(AF_INET, &new_entry->orig_ip, src_ip_str, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &new_entry->trans_ip, dst_ip_str, INET_ADDRSTRLEN);
+        
+        append_ln_to_log_file_nat("NAT: Created new outbound entry: %s:%u -> %s:%u",
+                                src_ip_str, new_entry->orig_port,
+                                dst_ip_str, new_entry->trans_port);
+        
+        // Add to hash table (same as your original code)
+        uint32_t h = hash_key(details->orig_ip, details->orig_port, details->protocol) % NAT_TABLE_SIZE;
+        struct nat_bucket *new_bucket = malloc(sizeof(struct nat_bucket));
+        if (!new_bucket) {
+            free(new_entry);
+            append_ln_to_log_file_nat("NAT: Failed to allocate new bucket");
+            return NULL;
+        }
+        
+        new_bucket->entry = new_entry;
+        new_bucket->next = nat_table[h];
+        nat_table[h] = new_bucket;
+        
+        return new_entry;
     }
+    else{       // INBOUND PACKET | WAN to LAN
 
-    // Create new entry
-    struct nat_entry *new_entry = malloc(sizeof(struct nat_entry));
-    if (!new_entry) {
-        append_ln_to_log_file_nat("NAT: Failed to allocate new entry");
+        existing = find_by_translated_linear(details);
+        
+        if (existing) {
+            // Found existing inbound translation
+            inet_ntop(AF_INET, &existing->trans_ip, src_ip_str, INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, &existing->orig_ip, dst_ip_str, INET_ADDRSTRLEN);
+            
+            append_ln_to_log_file_nat("NAT: Using existing inbound entry: %s:%u -> %s:%u",
+                                    src_ip_str, existing->trans_port,
+                                    dst_ip_str, existing->orig_port);
+            return existing;
+        }
+        
+        // No existing entry - for inbound, typically we would check if this matches
+        // a port forwarding rule. Returning NULL means no translation will occur
+        // unless you implement port forwarding logic here.
+        append_ln_to_log_file_nat("NAT: No existing inbound entry for %s:%u",
+                                inet_ntoa(*(struct in_addr*)&details->trans_ip),
+                                details->trans_port);
+        
+        // Implement port forwarding logic here if needed
+        // For now, returning NULL indicates packet should be dropped
         return NULL;
     }
-
-    *new_entry = (struct nat_entry){
-        .orig_ip = details->orig_ip,
-        .orig_port = details->orig_port,
-        .trans_ip = wan_machine_ip,
-        .trans_port = allocate_port(details->protocol),
-        .protocol = details->protocol,
-        .last_used = time(NULL)
-    };
-
-    // Log creation    
-    char src_ip_str[INET_ADDRSTRLEN], wan_ip_str[INET_ADDRSTRLEN];
-          
-    inet_ntop(AF_INET, &new_entry->orig_ip, src_ip_str, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &new_entry->trans_ip, wan_ip_str, INET_ADDRSTRLEN);
-    
-    append_ln_to_log_file_nat("NAT: Created new entry: %s:%u translates as %s:%u",
-                            src_ip_str,
-                            new_entry->orig_port,
-                            wan_ip_str,
-                            new_entry->trans_port);
-
-    // Add to hash table
-    uint32_t h = hash_key(details->orig_ip, details->orig_port, details->protocol) % NAT_TABLE_SIZE;
-    struct nat_bucket *new_bucket = malloc(sizeof(struct nat_bucket));
-    if (!new_bucket) {
-        free(new_entry);
-        append_ln_to_log_file_nat("NAT: Failed to allocate new bucket");
-        return NULL;
-    }
-
-    new_bucket->entry = new_entry;
-    new_bucket->next = nat_table[h];
-    nat_table[h] = new_bucket;
-
-
-    return new_entry;
 }
 
 // NAT table cleanup.
@@ -244,11 +404,6 @@ void nat_table_cleanup() {
 }
 
 /// ARP:
-
-#define ARP_CACHE_TIMEOUT 300  // 5 minutes
-#define MAX_BUFFERED_PACKETS 64
-
-typedef enum { INBOUND, OUTBOUND } packet_direction_t;
 
 struct arp_cache_entry {
     uint32_t ip;
@@ -641,6 +796,22 @@ void send_raw_frame(uint8_t *dest_mac, uint16_t protocol, void *data, size_t len
     sendto(sock, data, len, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
 }
 
+uint8_t validate_udp_checksum(struct ipv4_header *ip_header, struct udp_header *udp_header, const uint8_t *payload, size_t payload_len) {
+    // Checksum validation
+    uint16_t received_checksum = ntohs(udp_header->check);
+    udp_header->check = 0;
+    uint16_t checksum = compute_udp_checksum(ip_header, udp_header, payload, payload_len);
+    if (checksum == 0) checksum = 0xFFFF;
+    append_ln_to_log_file_nat("UDP checksum before any change: 0x%04" PRIx16 ", received checksum value: 0x%04" PRIx16, 
+                                ntohs(checksum), received_checksum);
+    if (ntohs(checksum) != received_checksum) {
+        return 0;
+    }
+    append_ln_to_log_file_nat("NAT: UDP checksum validation passed.");
+    udp_header->check = received_checksum;
+    return 1;
+}
+
 // Flow: From LAN to WAN => 192.168.20.2 -> 172.217.215.102
 void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     
@@ -650,8 +821,13 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
     append_ln_to_log_file_nat("Handle outbound: Ethernet header type: %u", ntohs(eth_header->type));
     
-    
-    if(ntohs(eth_header->type) != IPV4_ETH_TYPE) return;  // Anything other than IPv4 SHALL NOT PASS!
+    uint16_t eth_type_host = ntohs(eth_header->type);
+    if (eth_type_host == ARP_ETH_TYPE){         // Process ARP reply.
+        handle_arp_reply(buffer, len);
+    }
+    else if (eth_type_host != IPV4_ETH_TYPE){   // Anything other than IPv4 SHALL NOT PASS!
+        return;
+    }    
     
     // Get IP packet and header.
     struct ipv4_packet *ip_packet = extract_ipv4_packet_from_eth_payload(&eth_frame->payload);
@@ -659,21 +835,18 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     
     if(ip_header->version != 4) return;                   // Anything other than IPv4 SHALL NOT PASS!
     
-    // Copy src address and dsr address.
-    uint16_t dport;
-    uint32_t src_ip = ip_header->saddr;
-    uint32_t dst_ip = ip_header->daddr;
+    uint16_t translated_dport, translated_sport;
 
     // Is destination IP in the same subnet? Don't process it.
-    if (is_local_bound_packet(dst_ip, src_ip) == 1){
+    if (is_local_bound_packet(ip_header->daddr, ip_header->saddr) == 1){
         append_ln_to_log_file_nat("NAT: Packet is local bound, not processing.");
         return;
     }    
 
-    struct nat_entry *incoming_packet_details = malloc(sizeof(struct nat_entry));
+    struct nat_entry *received_packet_details = malloc(sizeof(struct nat_entry));
 
-    incoming_packet_details->orig_ip = src_ip;
-    incoming_packet_details->protocol = ip_header->protocol;
+    received_packet_details->protocol = ip_header->protocol;
+    received_packet_details->orig_ip = ip_header->saddr;
     
     struct nat_entry *translated_nat_entry;
 
@@ -687,7 +860,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             
             if (icmp_h->type == 0){
                 const struct icmp_echo *icmp_echo_packet = extract_icmp_echo_header_from_ipv4_packet(ip_packet);
-                incoming_packet_details->orig_port = ntohs(icmp_echo_packet->identifier);  // ICMP query ID as "port"
+                received_packet_details->orig_port = ntohs(icmp_echo_packet->identifier);  // ICMP query ID as "port"
             }
             else if (icmp_h->type == 3 || icmp_h->type == 11 || icmp_h->type == 12) {
                 const struct icmp_error *icmp_error_packet = extract_icmp_error_header_from_ipv4_packet(ip_packet);
@@ -695,23 +868,22 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
                 if (orig_ip_hdr->protocol == IPPROTO_TCP) {  
                     // If TCP, update the packet details with original for the search->
                     struct tcp_header *orig_tcp_hdr = (struct tcp_header*)(orig_ip_hdr + 1);
-                    incoming_packet_details->orig_ip = orig_ip_hdr->saddr;
-                    incoming_packet_details->orig_port = ntohs(orig_tcp_hdr->sport);
-                    incoming_packet_details->protocol = IPPROTO_TCP;
+                    received_packet_details->orig_ip = orig_ip_hdr->saddr;
+                    received_packet_details->orig_port = ntohs(orig_tcp_hdr->sport);
+                    received_packet_details->protocol = IPPROTO_TCP;
                 }
             }
             break;
-
 
         case TCP_IP_TYPE:
 
             append_ln_to_log_file_nat("NAT: Outbound TCP packet.");
             const struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
             
-            incoming_packet_details->orig_port = ntohs(tcp_h->sport);
-            dport = ntohs(tcp_h->dport);
+            received_packet_details->orig_port = ntohs(tcp_h->sport);
+            translated_dport = ntohs(tcp_h->dport);
             
-            translated_nat_entry = enrich_entry(incoming_packet_details);
+            translated_nat_entry = enrich_entry(received_packet_details, OUTBOUND);
             if (translated_nat_entry == NULL) {
                 append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
                 return;
@@ -727,49 +899,45 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             // Network byte order translation happens in update_tcp_ports.
             // Manually assign the translation and call the checksum. Don't use the function.
     
-
             break;
 
 
         case UDP_IP_TYPE:{
             // Extraction
+            append_ln_to_log_file_nat("NAT: Outbound UDP packet.");
+
             struct udp_header *udp_h = extract_udp_header_from_ipv4_packet(ip_packet);
-            append_ln_to_log_file_nat("NAT: Outbound UDP packet.");
             uint16_t udp_len_host = ntohs(udp_h->len);
-            append_ln_to_log_file_nat("NAT: Outbound UDP packet.");
         
             size_t udp_payload_len = (udp_len_host > sizeof(struct udp_header)) 
                                ? (udp_len_host - sizeof(struct udp_header)) 
                                : 0;
 
-            // CORRECTED: Remove & from ip_packet->payload
+            
             const uint8_t *udp_payload = (const uint8_t *)(udp_h + 1); // Point to payload after UDP header
 
-            uint16_t received_check = ntohs(udp_h->check);
-            udp_h->check = 0;
-            // CORRECTED: Remove & from ip_header and udp_h
-            uint16_t udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
-        
-            // Handle zero checksum special case (RFC 768)
-            if (udp_check == 0) udp_check = 0xFFFF;
-        
-            append_ln_to_log_file_nat("UDP checksum before any change: 0x%04" PRIx16 ", received checksum value: 0x%04" PRIx16, 
-                                ntohs(udp_check), received_check);
-
-            // Translation:
-            translated_nat_entry = enrich_entry(incoming_packet_details);
-            if (translated_nat_entry == NULL) {
-                append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+            if (!validate_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len)){
+                append_ln_to_log_file_nat("Outbound: UDP checksum validation failed. Dropping packet.");
                 return;
             }
 
-            ip_header->saddr = translated_nat_entry->trans_ip;
-            
+            received_packet_details->orig_port = ntohs(udp_h->sport);
+
+            // Translation:
+
+            translated_nat_entry = enrich_entry(received_packet_details, OUTBOUND);
+            if (translated_nat_entry == NULL) {
+                append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+                return;
+            }   
+            ip_header->saddr = translated_nat_entry->trans_ip;         
             udp_h->sport = htons(translated_nat_entry->trans_port);
+            translated_sport = ntohs(udp_h->sport);            // Only used for logging.
+            translated_dport = ntohs(udp_h->dport);            // Only used for logging.
         
             // Recompute checksum with new ports and IP
             udp_h->check = 0;
-            udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
+            uint16_t udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
             if (udp_check == 0) udp_check = 0xFFFF;  // Handle zero case
         
             udp_h->check = udp_check;
@@ -785,11 +953,11 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     unsigned char *bytes = (unsigned char *)&ip_header->saddr;
     append_ln_to_log_file_nat("LAN IP: %d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
 
-    append_ln_to_log_file_nat("LAN Port: %u", incoming_packet_details->trans_port);
-    bytes = (unsigned char *)&dst_ip;
+    append_ln_to_log_file_nat("LAN Port: %u", translated_sport);
+    bytes = (unsigned char *)&ip_header->daddr;
     append_ln_to_log_file_nat("WAN IP: %d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
-    append_ln_to_log_file_nat("WAN Port: %u", dport);
-    append_ln_to_log_file_nat("Protocol: %u", incoming_packet_details->protocol);
+    append_ln_to_log_file_nat("WAN Port: %u", translated_dport);
+    append_ln_to_log_file_nat("Protocol: %u", ip_header->protocol);
 
     
     // Recalculate IP checksum
@@ -799,11 +967,8 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
 
     // Update Ethernet headers for WAN interface
-    uint8_t wan_mac_1[6] = {0x08, 0x00, 0x27, 0x03, 0x44, 0xa4}; // 10.0.2.15
     memcpy(eth_header->src_mac, wan_machine_mac, 6);
     
-    // uint8_t dst_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02}; // 10.0.2.2
-
     // Check ARP cache for gateway MAC
     struct arp_cache_entry *entry;
     HASH_FIND_INT(arp_cache, &wan_gateway_ip, entry);
@@ -847,10 +1012,10 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     }
 
     uint16_t eth_type_host = ntohs(eth_header->type);
-    if (eth_type_host == ARP_ETH_TYPE){
+    if (eth_type_host == ARP_ETH_TYPE){         // Process ARP reply.
         handle_arp_reply(buffer, len);
     }
-    else if (eth_type_host != IPV4_ETH_TYPE){
+    else if (eth_type_host != IPV4_ETH_TYPE){   // Anything other than IPv4 SHALL NOT PASS!
         return;
     }    
     
@@ -858,15 +1023,14 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     struct ipv4_packet *ip_packet = extract_ipv4_packet_from_eth_payload(&eth_frame->payload);
     struct ipv4_header *ip_header = extract_ipv4_header_from_ipv4_packet(ip_packet);
 
-    if(ip_header->version != 4) return;                   // Anything other than IPv4 SHALL NOT PASS!
-
-    // Copy src address and dsr address.
-    uint16_t sport, dport;
-    uint32_t src_ip = ip_header->saddr;
-    uint32_t dst_ip = ip_header->daddr;
+    if(ip_header->version != 4) return;                                                 // Anything other than IPv4 SHALL NOT PASS!
     append_ln_to_log_file_nat("NAT: Inbound ipv4 packet.");
 
-    struct nat_entry packet_details;
+    uint16_t sport;
+    struct nat_entry *received_packet_details = malloc(sizeof(struct nat_entry));       // Init packet_details.
+    
+    received_packet_details->protocol = ip_header->protocol;
+    received_packet_details->trans_ip = ip_header->daddr;                               // The destination address is machine's ip.
 
     switch (ip_header->protocol){
         case ICMP_IP_TYPE:
@@ -874,6 +1038,9 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             // There're different types of ICMP packets, I'm considering only echo request, reply and errors.
             // Request and reply has their own identifier to be considered as port.
             // For errors, I'm going to use the original packet headers to find the IP and port. I'm assuming these will be for TCP.
+            append_ln_to_log_file_nat("ICMP packet, not implemented yet.");
+            break;
+
             const struct icmp_header *icmp_h = extract_icmp_header_from_ipv4_packet(ip_packet);
             if (icmp_h->type == 0){
                 const struct icmp_echo *icmp_echo_packet = extract_icmp_echo_header_from_ipv4_packet(ip_packet);
@@ -891,26 +1058,90 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             }
             break;
         case TCP_IP_TYPE:
+            append_ln_to_log_file_nat("TCP packet, not implemented yet.");
+            break;
+
             const struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
             
             sport = ntohs(tcp_h->sport);
-            dport = ntohs(tcp_h->dport);
 
             // Handle TCP connection state.
             break;
         case UDP_IP_TYPE:
-            const struct udp_header *udp_h = extract_udp_header_from_ipv4_packet(ip_packet);
-            sport = ntohs(udp_h->sport);
-            dport = ntohs(udp_h->dport);
-            // Handle this UDP packet and reset the timeout.
+            // Extraction:
+            struct udp_header *udp_h = extract_udp_header_from_ipv4_packet(ip_packet);
+            uint16_t udp_len_host = ntohs(udp_h->len);
+
+            size_t udp_payload_len = (udp_len_host > sizeof(struct udp_header)) 
+                               ? (udp_len_host - sizeof(struct udp_header)) 
+                               : 0;
+
+            const uint8_t *udp_payload = (const uint8_t *)(udp_h + 1); // Point to payload after UDP header
+
+            if (!validate_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len)){
+                append_ln_to_log_file_nat("Inbound: UDP checksum validation failed. Dropping packet.");
+                return;
+            }
+
+
+            received_packet_details->trans_port = ntohs(udp_h->dport);
+            sport = udp_h->sport;
+
+            char dest_ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &received_packet_details->trans_ip, dest_ip_str, INET_ADDRSTRLEN);
+            append_ln_to_log_file_nat("Inbound packet details: %s:%u (protocol: %u)", 
+                                    dest_ip_str, received_packet_details->trans_port, received_packet_details->protocol);
+
+            // Translation:
+            struct nat_entry *enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
+
+            if (enriched_nat_entry == NULL) {
+                append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+                return;
+            }
+            
+            ip_header->daddr = enriched_nat_entry->orig_ip;
+            udp_h->dport = htons(enriched_nat_entry->orig_port);
+
+            // Recompute checksum with new ports and IP
+            udp_h->check = 0;
+            uint16_t udp_check = compute_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len);
+            if (udp_check == 0) udp_check = 0xFFFF;  // Handle zero case
+            udp_h->check = udp_check;
+
             break;
         default:
             // Unsupported protocol
             
             return;
     }
-    packet_details.orig_ip = src_ip;
-    packet_details.orig_port = sport;
+    
+    // Recalculate IP checksum:
+    ip_header->check = 0; // Reset checksum before recalculation
+    ip_header->check = compute_checksum(ip_header, ip_header->ihl * 4);
+    // append_ln_to_log_file_nat("NAT: Updated IP checksum: %u", ip_header->check);
+
+    // Update Ethernet headers for LAN interface
+    
+    memcpy(eth_header->src_mac, lan_machine_mac, 6);
+
+    struct arp_cache_entry *entry;
+    HASH_FIND_INT(arp_cache, &ip_header->daddr, entry);
+
+    if (entry) {
+        // MAC known - send immediately
+        memcpy(eth_header->dst_mac, entry->mac, 6);
+        send_raw_frame(entry->mac, ETH_P_IP, eth_frame, len, INBOUND);
+        append_ln_to_log_file_nat("NAT: Sent packet to known MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+                                entry->mac[0], entry->mac[1], entry->mac[2],
+                                entry->mac[3], entry->mac[4], entry->mac[5]);
+    } else {
+        // Buffer translated packet and request MAC
+        buffer_packet(eth_frame, len, wan_gateway_ip, INBOUND);
+        send_arp_request(ip_header->daddr, INBOUND);
+        append_ln_to_log_file_nat("NAT: Buffered packet awaiting ARP resolution");
+    }
+
 }
 
 void nat_main(int router_rx, int router_tx, int verbose_l) {
@@ -975,6 +1206,9 @@ void nat_main(int router_rx, int router_tx, int verbose_l) {
                 append_ln_to_log_file_nat("[Router Command] clear logs");
                 append_ln_to_log_file_nat(NULL);
                 write(tx_fd, "Cleared logs.\n", count);
+            }
+            else if (strcmp(command_from_router, "entries") == 0){
+                print_nat_table_to_fd();
             }
             else {
                 char msg[300];
