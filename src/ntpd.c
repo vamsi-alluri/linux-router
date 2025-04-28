@@ -128,6 +128,9 @@ void ntp_main(int rx_fd, int tx_fd)
                     }
                 }
             }
+            else {
+               handle_ntp_command(rx_fd, tx_fd, "shutdown"); 
+            }
         }
 
         // For reading & processing incoming NTP queries from clients

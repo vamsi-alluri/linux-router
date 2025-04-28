@@ -113,7 +113,9 @@ void dns_main(int rx_fd, int tx_fd){
                         command[pos++] = buffer[i];
                     }
                 }
-
+            }
+            else {
+               handle_dns_command(rx_fd, tx_fd, "shutdown"); 
             }
         }
 
