@@ -25,7 +25,7 @@
 #define MAX_THREADS 20
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
-#define DHCP_SERVER_INTERFACE "enp0s3" //change to your interface name 
+#define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
