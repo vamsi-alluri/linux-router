@@ -254,7 +254,7 @@ void print_help(service_t *services)
     fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
     fprintf(stderr, "      <service>:start      - Start the specific service\n");
     fprintf(stderr, "      <service>:shutdown   - Shutdown the specific service\n");
-    fprintf(stderr, "  config_lan <iface> <ip> <netmask> - Configure LAN interface\n");
+    fprintf(stderr, "  config_ip <iface> <ip> <netmask> - Configure LAN interface\n");
     fprintf(stderr, "  help                - Show this help\n");
     fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
     fprintf(stderr, "  services            - Print what services are running.\n");
@@ -435,8 +435,8 @@ void handle_cli_input(service_t *services, char * argv[]) {
             fprintf(stderr, "root@router# "); 
             return;
         }
-        else if (strncmp(raw_cmd, "config_lan ", 11) == 0) {
-            char *args = raw_cmd + 11; // point past "config_lan"
+        else if (strncmp(raw_cmd, "config_ip ", 10) == 0) {
+            char *args = raw_cmd + 11; // point past "config_ip"
             char *iface = strtok(args, " ");
             char *ip = strtok(NULL, " ");
             char *mask = strtok(NULL, " ");
@@ -444,7 +444,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
             if (iface && ip && mask) {
                 configure_lan_interface(iface, ip, mask);
             } else {
-                fprintf(stderr, "Usage: config_lan <interface> <ip_address> <netmask>\n");
+                fprintf(stderr, "Usage: config_ip <interface> <ip_address> <netmask>\n");
             }
         }
         else {
