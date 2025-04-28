@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <sys/socket.h>
