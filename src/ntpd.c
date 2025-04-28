@@ -19,10 +19,10 @@
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
 #define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
 
-static char *log_file_path = DEFAULT_NTP_LOG_PATH;
+static char *ntp_log_file_path = DEFAULT_NTP_LOG_PATH;
 
 static void clear_log_file_ntp() {
-    FILE *log_file = fopen(log_file_path, "w");
+    FILE *log_file = fopen(ntp_log_file_path, "w");
     if (log_file) {
         fprintf(log_file, "\n\n");
         fclose(log_file);
@@ -35,7 +35,7 @@ static void vappend_ln_to_log_file_ntp(const char *msg, va_list args) {
     // Clean up the log file if the size is more than 10 MB.
     va_list argp;  
 
-    FILE *log_file = fopen(log_file_path, "r");
+    FILE *log_file = fopen(ntp_log_file_path, "r");
     if (log_file) {
         fseek(log_file, 0, SEEK_END);
         long file_size = ftell(log_file);
@@ -48,7 +48,7 @@ static void vappend_ln_to_log_file_ntp(const char *msg, va_list args) {
     }
 
     if (msg == NULL || strcmp("", msg) == 0){
-        log_file = fopen(log_file_path, "a");
+        log_file = fopen(ntp_log_file_path, "a");
         if (log_file) {
             fprintf(log_file, "\n");
             fclose(log_file);
@@ -60,7 +60,7 @@ static void vappend_ln_to_log_file_ntp(const char *msg, va_list args) {
     char buffer[26];
     strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
     
-    log_file = fopen(log_file_path, "a");
+    log_file = fopen(ntp_log_file_path, "a");
     if (log_file) {
         fprintf(log_file, "[%s] ", buffer);
         vfprintf(log_file, msg, args);

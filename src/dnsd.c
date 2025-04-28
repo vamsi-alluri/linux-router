@@ -17,10 +17,10 @@
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
 #define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
 
-static char *log_file_path = DEFAULT_DNS_LOG_PATH;
+static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 
 static void clear_log_file_dns() {
-    FILE *log_file = fopen(log_file_path, "w");
+    FILE *log_file = fopen(dns_log_file_path, "w");
     if (log_file) {
         fprintf(log_file, "\n\n");
         fclose(log_file);
@@ -33,7 +33,7 @@ static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
     // Clean up the log file if the size is more than 10 MB.
     va_list argp;  
 
-    FILE *log_file = fopen(log_file_path, "r");
+    FILE *log_file = fopen(dns_log_file_path, "r");
     if (log_file) {
         fseek(log_file, 0, SEEK_END);
         long file_size = ftell(log_file);
@@ -46,7 +46,7 @@ static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
     }
 
     if (msg == NULL || strcmp("", msg) == 0){
-        log_file = fopen(log_file_path, "a");
+        log_file = fopen(dns_log_file_path, "a");
         if (log_file) {
             fprintf(log_file, "\n");
             fclose(log_file);
@@ -58,7 +58,7 @@ static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
     char buffer[26];
     strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
     
-    log_file = fopen(log_file_path, "a");
+    log_file = fopen(dns_log_file_path, "a");
     if (log_file) {
         fprintf(log_file, "[%s] ", buffer);
         vfprintf(log_file, msg, args);
@@ -86,11 +86,10 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
 
 void dns_main(int rx_fd, int tx_fd){
     // Send the PID back to the parent for processing
-    append_ln_to_log_file_dns("i am alive");
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
 
-    append_ln_to_log_file_dns("i am also alive");
+    append_ln_to_log_file_dns("i am alive");
     memset(domain_table, 0, MAX_ENTRIES * sizeof(dns_bucket *));   // Clear domain_table
 
     // Add a dummy value to the table at 0 that will be used for iterating through it
