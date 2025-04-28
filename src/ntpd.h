@@ -2,6 +2,7 @@
 #define NTPD_H
 
 #include <time.h>
+#include <stdarg.h>
 typedef struct
 {
     unsigned char li:2, vn:3, mode:3;      /* Leap Indicator (no warning = 0), Version Number (4), Mode (Server = 4) */

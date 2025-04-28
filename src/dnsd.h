@@ -2,6 +2,7 @@
 #define DNSD_H
 
 #include <stdbool.h>
+#include <stdarg.h>
 #define MAX_DN_LENGTH 255
 #define IP_LENGTH 4          /* For IPv4 */
 #define ANS_LENGTH 16        /* DNS answer */

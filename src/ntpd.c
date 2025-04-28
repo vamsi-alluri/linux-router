@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
-#include <stdarg.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
