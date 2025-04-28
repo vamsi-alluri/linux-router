@@ -9,15 +9,17 @@
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <time.h>
 
 #define DNS_PORT 53              // Well-known port
 #define LOOKUP_PORT 31534        // Arbitrary unused port & ignored by NAT
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
+#define DEFAULT_DNS_LOG_PATH "<change to pwd>/logs/dns_log.txt"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
+int read_from_router_pipe, write_to_router_pipe;
 
 static void clear_log_file_dns() {
     FILE *log_file = fopen(dns_log_file_path, "w");
@@ -53,11 +55,11 @@ static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
         }
         return;
     }
-
+    
     time_t now = time(NULL);
     char buffer[26];
     strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
-    
+
     log_file = fopen(dns_log_file_path, "a");
     if (log_file) {
         fprintf(log_file, "[%s] ", buffer);
@@ -85,11 +87,15 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
 }
 
 void dns_main(int rx_fd, int tx_fd){
+
+    read_from_router_pipe = rx_fd;
+    write_to_router_pipe = tx_fd;
+
     // Send the PID back to the parent for processing
     pid_t pid = getpid();
-    write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
-
-    append_ln_to_log_file_dns("i am alive");
+    write(write_to_router_pipe, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
+    
+    append_ln_to_log_file_dns("DNS service started.");
     memset(domain_table, 0, MAX_ENTRIES * sizeof(dns_bucket *));   // Clear domain_table
 
     // Add a dummy value to the table at 0 that will be used for iterating through it
