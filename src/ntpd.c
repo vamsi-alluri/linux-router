@@ -17,9 +17,9 @@
 #define DEFAULT_REFRESH 14400             // 4 hours in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
-#define DEFAULT_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
+#define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
 
-static char *log_file_path = DEFAULT_LOG_PATH;
+static char *log_file_path = DEFAULT_NTP_LOG_PATH;
 
 static void clear_log_file_ntp() {
     FILE *log_file = fopen(log_file_path, "w");
