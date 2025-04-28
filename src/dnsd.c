@@ -20,23 +20,6 @@
 
 static char *log_file_path = DEFAULT_LOG_PATH;
 
-void append_ln_to_log_file_dns(const char *msg, ...) {
-    
-    va_list args;
-    va_start(args, msg);
-    vappend_ln_to_log_file_dns(msg, args);
-    va_end(args);
-}
-
-void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
-    // if (verbose != 1) return;
-
-    // va_list args;
-    // va_start(args, msg);
-    // vappend_ln_to_log_file_dns(msg, args);
-    // va_end(args);
-}
-
 static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
 
     // Clean up the log file if the size is more than 10 MB.
@@ -74,6 +57,23 @@ static void vappend_ln_to_log_file_dns(const char *msg, va_list args) {
         fprintf(log_file, "\n");
         fclose(log_file);
     }
+}
+
+void append_ln_to_log_file_dns(const char *msg, ...) {
+    
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file_dns(msg, args);
+    va_end(args);
+}
+
+void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
+    // if (verbose != 1) return;
+
+    // va_list args;
+    // va_start(args, msg);
+    // vappend_ln_to_log_file_dns(msg, args);
+    // va_end(args);
 }
 
 void dns_main(int rx_fd, int tx_fd){

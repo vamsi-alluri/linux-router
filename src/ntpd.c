@@ -21,24 +21,6 @@
 #define DEFAULT_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
 
 static char *log_file_path = DEFAULT_LOG_PATH;
-unsigned char server_hostname[255];
-
-void append_ln_to_log_file_ntp(const char *msg, ...) {
-    
-    va_list args;
-    va_start(args, msg);
-    vappend_ln_to_log_file_ntp(msg, args);
-    va_end(args);
-}
-
-void append_ln_to_log_file_ntp_verbose(const char *msg, ...) {
-    // if (verbose != 1) return;
-
-    // va_list args;
-    // va_start(args, msg);
-    // vappend_ln_to_log_file_ntp(msg, args);
-    // va_end(args);
-}
 
 static void vappend_ln_to_log_file_ntp(const char *msg, va_list args) {
 
@@ -78,6 +60,25 @@ static void vappend_ln_to_log_file_ntp(const char *msg, va_list args) {
         fclose(log_file);
     }
 }
+
+void append_ln_to_log_file_ntp(const char *msg, ...) {
+    
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file_ntp(msg, args);
+    va_end(args);
+}
+
+void append_ln_to_log_file_ntp_verbose(const char *msg, ...) {
+    // if (verbose != 1) return;
+
+    // va_list args;
+    // va_start(args, msg);
+    // vappend_ln_to_log_file_ntp(msg, args);
+    // va_end(args);
+}
+
+unsigned char server_hostname[255];
 
 void ntp_main(int rx_fd, int tx_fd)
 {
