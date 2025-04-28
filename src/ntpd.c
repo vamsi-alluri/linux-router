@@ -11,12 +11,12 @@
 #include <netdb.h>
 #include <net/if.h>
 
-#define NTP_TIMESTAMP_DELTA 2208988800ull // Difference between UNIX and NTP start time
+#define NTP_TIMESTAMP_DELTA 2208988800ul  // Difference between UNIX and NTP start time
 #define NTPD_PORT 123                     // Well-known port
 #define REFRESH_PORT 32432                // Arbitrary unused port & ignored by NAT
 #define DEFAULT_REFRESH 14400             // 4 hours in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
-#define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
+#define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
 #define DEFAULT_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
 
 static char *log_file_path = DEFAULT_LOG_PATH;
@@ -240,7 +240,7 @@ void ntp_main(int rx_fd, int tx_fd)
             // Had to change from bit fields
             out_packet.li_vn_mode = 0b00100100;
             out_packet.strat = 4; // Secondary Server (using local router time, not GPS)
-            out_packet.xmt = htonll(time(NULL)              // Local UNIX time + Diff btwn UNIX and NTP times,
+            out_packet.xmtSec = htonl(time(NULL)              // Local UNIX time + Diff btwn UNIX and NTP times,
                                     + NTP_TIMESTAMP_DELTA); // then convert byte order for 8 byte time
 
             if ((send_len = sendto(s, &out_packet, sizeof(out_packet), 0,
@@ -330,7 +330,7 @@ time_t refresh_time()
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
     // Extract time from packet and update local time
-    unsigned long newTimeSec = ntohl((unsigned int)(refresh_packet.xmt >> 32)) - NTP_TIMESTAMP_DELTA;
+    unsigned long newTimeSec = ntohl(refresh_packet.xmtSec) - NTP_TIMESTAMP_DELTA;
 
     append_ln_to_log_file_ntp("Server time: %ld (Unix seconds)\n", newTimeSec);
 

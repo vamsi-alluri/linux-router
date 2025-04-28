@@ -12,10 +12,14 @@ typedef struct
     unsigned int rtDly;                    /* Root Delay */
     unsigned int rtDsp;                    /* Root Dispersion */
     unsigned int id;                       /* Reference ID */
-    unsigned long ref;                     /* Reference Timestamp */
-    unsigned long org;                     /* Origin Timestamp */
-    unsigned long rec;                     /* Receive Timestamp */
-    unsigned long xmt;                     /* Transmit Timestamp */
+    unsigned int refSec;                   /* Reference Timestamp in Seconds */
+    unsigned int refFrc;                   /* Reference Timestamp in Fractions of a Second */
+    unsigned int orgSec;                   /* Origin Timestamp in Seconds */
+    unsigned int orgFrc;                   /* Origin Timestamp in Fractions of a Second */
+    unsigned int recSec;                   /* Receive Timestamp in Seconds */
+    unsigned int recFrc;                   /* Receive Timestamp in Fractions of a Second */
+    unsigned int xmtSec;                   /* Transmit Timestamp in Seconds */
+    unsigned int xmtFrc;                   /* Transmit Timestamp in Fractions of a Second */
 } ntp_packet;
 
 static time_t last_refresh;
