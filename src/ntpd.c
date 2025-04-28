@@ -175,6 +175,7 @@ void ntp_main(int rx_fd, int tx_fd)
         // For reading & processing commands from router
         if (FD_ISSET(rx_fd, &rfds))
         {
+            append_ln_to_log_file_ntp("I see something on rx_fd");
             char buffer[256];
             ssize_t count;
 
@@ -183,6 +184,7 @@ void ntp_main(int rx_fd, int tx_fd)
 
             if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
+                append_ln_to_log_file_ntp("I read something on rx_fd");
                 for (int i = 0; i < count; i++)
                 {
                     if (buffer[i] == '\n')
@@ -349,6 +351,7 @@ time_t refresh_time()
 
 void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
 {
+    append_ln_to_log_file_ntp("I try to handle something on rx_fd");
     // Handle each command and write reply to tx_fd
     if (strcmp(command, "shutdown") == 0)
     {
