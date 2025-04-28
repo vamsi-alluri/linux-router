@@ -270,11 +270,23 @@ time_t refresh_time()
         return time(NULL);
     }
 
+    struct sockaddr_in local_saddr;
+    memset(&local_saddr, 0, sizeof(local_saddr));
+    local_saddr.sin_family = AF_INET;
+    local_saddr.sin_port = htons(REFRESH_PORT);
+    local_saddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    // Bind socket to a unsurveiled port by NAT
+    if (bind(sock, (struct sockaddr *)&local_saddr, sizeof(local_saddr)) < 0) {
+        append_ln_to_log_file_ntp("cannot bind refresh\n");
+        return time(NULL);
+    }
+
     // Connects the socket to the server’s IP address and port number
     struct sockaddr_in saddr;
     memset(&saddr, 0, sizeof(saddr));
     saddr.sin_family = AF_INET;
-    saddr.sin_port = htons(REFRESH_PORT);
+    saddr.sin_port = htons(NTPD_PORT);
     struct hostent *hostinfo = gethostbyname(server_hostname);
     if (hostinfo == 0)
     {

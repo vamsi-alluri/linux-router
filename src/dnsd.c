@@ -134,6 +134,7 @@ void dns_main(int rx_fd, int tx_fd){
     ser_addr.sin_port = htons(LOOKUP_PORT);
     ser_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
+    // Bind socket to a unsurveiled port by NAT
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0) {
         append_ln_to_log_file_dns("bind");
         close(s);
