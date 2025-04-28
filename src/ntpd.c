@@ -217,12 +217,16 @@ void ntp_main(int rx_fd, int tx_fd)
             append_ln_to_log_file_ntp("Received packet from %s, port number:%d\n",
                    inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
-            if (in_packet.mode != 3)
+            // if (in_packet.mode != 3)
+            // Had to change from bit fields
+            if ((in_packet.li_vn_mode & 0b00000111) != 3)
             {
                 append_ln_to_log_file_ntp("ignore non client ntp request");
                 continue;
             }
-            if (in_packet.vn != 4)
+            // if (in_packet.vn != 4)
+            // Had to change from bit fields
+            if ((in_packet.li_vn_mode & 0b00111000) != 4)
             {
                 append_ln_to_log_file_ntp("version number of request not 4, but still reply");
             }
@@ -230,9 +234,11 @@ void ntp_main(int rx_fd, int tx_fd)
             // Contruct reply
             ntp_packet out_packet;
             memset(&out_packet, 0, sizeof(out_packet));
-            out_packet.li = 0;    // No warning
-            out_packet.vn = 4;    // Version 4
-            out_packet.mode = 4;  // Server
+            // out_packet.li = 0;    // No warning
+            // out_packet.vn = 4;    // Version 4
+            // out_packet.mode = 4;  // Server
+            // Had to change from bit fields
+            out_packet.li_vn_mode = 0b00100100;
             out_packet.strat = 4; // Secondary Server (using local router time, not GPS)
             out_packet.xmt = htonll(time(NULL)              // Local UNIX time + Diff btwn UNIX and NTP times,
                                     + NTP_TIMESTAMP_DELTA); // then convert byte order for 8 byte time
@@ -258,9 +264,12 @@ time_t refresh_time()
     memset(&refresh_packet, 0, sizeof(ntp_packet));
 
     // Populate packet
-    refresh_packet.li = 0;   // LI = 0
-    refresh_packet.vn = 4;   // VN = 4
-    refresh_packet.mode = 3; // Mode = 3 (Client)
+    // refresh_packet.li = 0;   // LI = 0
+    // refresh_packet.vn = 4;   // VN = 4
+    // refresh_packet.mode = 3; // Mode = 3 (Client)
+
+    // Had to change from bit fields
+    refresh_packet.li_vn_mode = 0b00100011;
 
     // Creates a socket
     int sock = socket(PF_INET, SOCK_DGRAM, 0);
