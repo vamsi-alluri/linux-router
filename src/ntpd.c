@@ -181,8 +181,8 @@ void ntp_main(int rx_fd, int tx_fd)
             char buffer[256];
             ssize_t count;
 
-            char command[256];
-            int pos = 0;
+            // char command[256];
+            // int pos = 0;
 
             if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
@@ -201,7 +201,7 @@ void ntp_main(int rx_fd, int tx_fd)
                 //         command[pos++] = buffer[i];
                 //     }
                 // }
-                command[count - 1] = '\0';
+                buffer[count - 1] = '\0';
                 handle_ntp_command(rx_fd, tx_fd, buffer);
             }
             else {
@@ -362,7 +362,7 @@ void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
     {
         append_ln_to_log_file_ntp("I am shutting down");
         // Clean shutdown on EOF or explicit command
-        write(tx_fd, "NTP: Acknowledged shutdown command.\n", 19);
+        write(tx_fd, "NTP: Acknowledged shutdown command.\n", 36);
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS);

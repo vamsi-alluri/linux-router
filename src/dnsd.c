@@ -164,27 +164,36 @@ void dns_main(int rx_fd, int tx_fd){
             append_ln_to_log_file_dns("select");
             continue;
         }
-        else if (select_ret == 0) continue; // Timeout
+        // else if (select_ret == 0) continue; // Timeout
 
         // For reading & processing commands from router
         if (FD_ISSET(rx_fd, &rfds)) {
+            append_ln_to_log_file_dns("I see something on rx_fd");
             char buffer[256];
             ssize_t count;
 
-            char command[256];
-            int pos = 0;
+            // char command[256];
+            // int pos = 0;
 
-            if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0) {
-                for (int i = 0; i < count; i++) {
-                    if (buffer[i] == '\n') {
-                        command[pos] = '\0';
-                        handle_dns_command(rx_fd, tx_fd, command);
-                        pos = 0;
-                    }
-                    else {
-                        command[pos++] = buffer[i];
-                    }
-                }
+            if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
+            {
+                append_ln_to_log_file_dns("I read something on rx_fd");
+                append_ln_to_log_file_dns("count is %d, buffer is %s", count, buffer);
+                // for (int i = 0; i < count; i++)
+                // {
+                //     if (buffer[i] == '\n')
+                //     {
+                //         command[pos] = '\0';
+                //         handle_ntp_command(rx_fd, tx_fd, command);
+                //         pos = 0;
+                //     }
+                //     else
+                //     {
+                //         command[pos++] = buffer[i];
+                //     }
+                // }
+                buffer[count - 1] = '\0';
+                handle_dns_command(rx_fd, tx_fd, buffer);
             }
             else {
                handle_dns_command(rx_fd, tx_fd, "shutdown"); 
@@ -239,7 +248,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
     if (strcmp(command, "shutdown") == 0) {
         // Clean shutdown on EOF or explicit command
         clean_table(true);
-        write(tx_fd, "DNS: Acknowledged shutdown command.\n", 19);
+        write(tx_fd, "DNS: Acknowledged shutdown command.\n", 36);
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS);
