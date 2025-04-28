@@ -22,6 +22,7 @@
 #include <time.h>
 #include "packet_helper.h"
 #include "natd.h"
+#include "uthash.h"
 
 
 #define BUFFER_SIZE 1518                // To cover the whole ethernet frame.
@@ -35,12 +36,15 @@
 #define UDP_IP_TYPE 17
 #define ICMP_IP_TYPE 1
 #define IPV4_ETH_TYPE 2048              // 0x0800 in decimal.
+#define ARP_ETH_TYPE 2054               // 0x0806 in decimal.
 #define NAT_TABLE_SIZE 4096             // Power of 2 for bitmask optimization  
 #define MASK 0xFFFFFF00
 #define TCP_TIMEOUT_DEFAULT 4 * 60 * 60 // 4 hrs in seconds.
 #define UDP_TIMEOUT_DEFAULT 5 * 60      // 5 min in seconds.
 #define ICMP_TIMEOUT_DEFAULT 60         // 1 min.
 #define CLEANUP_INTERVAL_DEFAULT 5 * 60         // 5 min in seconds.
+#define ARPOP_REQUEST 1
+#define ARPOP_REPLY   2
 
 // Reserved ports (Don't use these for assigning outbound ports to WAN.)
 // 22 to ssh into the linux machine.
@@ -53,11 +57,14 @@
 // Global variables:
 static int lan_raw, wan_raw, rx_fd, tx_fd;
 static char *log_file_path = DEFAULT_LOG_PATH;
-static uint8_t wan_mac[6];
-static uint32_t wan_gateway_ip, lan_gateway_ip;
-static char wan_machine_ip[INET_ADDRSTRLEN];
-static char lan_machine_ip[INET_ADDRSTRLEN];
+static uint8_t wan_machine_mac[6], lan_machine_mac[6], wan_gateway_mac[6];
+static uint32_t wan_machine_ip, lan_machine_ip, wan_gateway_ip;
+static char wan_machine_ip_str[INET_ADDRSTRLEN];
+static char lan_machine_ip_str[INET_ADDRSTRLEN];
 static int verbose, tcp_timeout = TCP_TIMEOUT_DEFAULT, udp_timeout = UDP_TIMEOUT_DEFAULT, icmp_timeout = ICMP_TIMEOUT_DEFAULT, cleanup_interval = CLEANUP_INTERVAL_DEFAULT;
+static uint8_t BROADCAST_MAC[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+static struct arp_cache_entry *arp_cache = NULL;
+static struct arp_pending_packet *pending_packets = NULL;
 
 // Explicit Function Declarations:
 int init_socket(char *iface_name);
@@ -171,7 +178,7 @@ struct nat_entry* enrich_entry(struct nat_entry *details) {
     *new_entry = (struct nat_entry){
         .orig_ip = details->orig_ip,
         .orig_port = details->orig_port,
-        .trans_ip = wan_gateway_ip,
+        .trans_ip = wan_machine_ip,
         .trans_port = allocate_port(details->protocol),
         .protocol = details->protocol,
         .last_used = time(NULL)
@@ -236,6 +243,131 @@ void nat_table_cleanup() {
     }  
 }
 
+/// ARP:
+
+#define ARP_CACHE_TIMEOUT 300  // 5 minutes
+#define MAX_BUFFERED_PACKETS 64
+
+typedef enum { INBOUND, OUTBOUND } packet_direction_t;
+
+struct arp_cache_entry {
+    uint32_t ip;
+    uint8_t mac[6];
+    time_t last_updated;
+    UT_hash_handle hh;
+};
+
+struct arp_pending_packet {
+    uint8_t *data;
+    size_t len;
+    uint32_t target_ip;
+    packet_direction_t direction;
+    time_t queued_at;
+    UT_hash_handle hh;
+};
+
+void arp_cache_update(uint32_t ip, uint8_t *mac) {
+    struct arp_cache_entry *entry;
+    HASH_FIND_INT(arp_cache, &ip, entry);
+    
+    if (!entry) {
+        entry = malloc(sizeof(*entry));
+        entry->ip = ip;  // Set the IP for the new entry
+        HASH_ADD_INT(arp_cache, ip, entry);
+    }
+    memcpy(entry->mac, mac, 6);
+    entry->last_updated = time(NULL);
+}
+
+void buffer_packet(uint8_t *data, size_t len, uint32_t target_ip, packet_direction_t dir) {
+    append_ln_to_log_file("Buffering packet for target IP: %s", inet_ntoa(*(struct in_addr *)&target_ip));
+    struct arp_pending_packet *pkt = malloc(sizeof(*pkt));
+    pkt->data = malloc(len);
+    memcpy(pkt->data, data, len);
+    pkt->len = len;
+    pkt->target_ip = target_ip;
+    pkt->direction = dir;
+    pkt->queued_at = time(NULL);
+    HASH_ADD_INT(pending_packets, target_ip, pkt);
+}
+
+void send_arp_request(uint32_t target_ip, packet_direction_t direction) {
+    // Allocate space for full Ethernet frame with ARP payload
+    size_t frame_size = sizeof(struct ethernet_header) + sizeof(struct arp_header);
+    uint8_t *frame = malloc(frame_size);
+    
+    // Build Ethernet header
+    struct ethernet_header *eth = (struct ethernet_header *)frame;
+    eth->type = htons(ETH_P_ARP);
+    memcpy(eth->dst_mac, BROADCAST_MAC, 6);
+    memcpy(eth->src_mac, (direction == OUTBOUND) ? wan_machine_mac : lan_machine_mac, 6);
+
+    // Build ARP header
+    struct arp_header *arp = (struct arp_header *)(frame + sizeof(struct ethernet_header));
+    *arp = (struct arp_header){
+        .hardware_type = htons(1),          // Ethernet
+        .protocol_type = htons(ETH_P_IP),   // IPv4
+        .hardware_len = 6,
+        .protocol_len = 4,
+        .operation = htons(ARPOP_REQUEST),  // Use standard constant
+        .sender_ip = (direction == OUTBOUND) ? wan_machine_ip : lan_machine_ip,
+        .target_ip = target_ip
+    };
+    
+    memcpy(arp->sender_mac, (direction == OUTBOUND) ? wan_machine_mac : lan_machine_mac, 6);
+    memset(arp->target_mac, 0, 6);
+
+    // Send raw frame
+    send_raw_frame(BROADCAST_MAC, ETH_P_ARP, frame, frame_size, direction);
+    
+    // Log with proper IP formatting
+    struct in_addr target_addr = {.s_addr = target_ip};
+    append_ln_to_log_file("Sent ARP request for %s via %s interface",
+                        inet_ntoa(target_addr),
+                        (direction == OUTBOUND) ? "WAN" : "LAN");
+    
+    free(frame);  // Clean up allocated memory
+}
+
+
+void handle_arp_reply(uint8_t *frame, ssize_t len) {
+
+    const struct arp_header *arp = extract_arp_header_from_ethernet_frame(frame);
+    
+    // Update cache
+    arp_cache_update(arp->sender_ip, (uint8_t *)arp->sender_mac);
+    
+    append_ln_to_log_file("Handling ARP reply...");
+    append_ln_to_log_file("Sender IP: %s", inet_ntoa(*(struct in_addr *)&arp->sender_ip));
+    append_ln_to_log_file("Sender MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+                            arp->sender_mac[0], arp->sender_mac[1], arp->sender_mac[2],
+                            arp->sender_mac[3], arp->sender_mac[4], arp->sender_mac[5]);
+    
+    // Process buffered packets
+    append_ln_to_log_file("Processing buffered packets...");
+    struct arp_pending_packet *pkt, *tmp;
+    HASH_FIND_INT(pending_packets, &arp->sender_ip, pkt);
+    
+    while(pkt) {
+        struct ethernet_header *eth_header = (struct ethernet_header *)pkt->data;
+        memcpy(eth_header->dst_mac, arp->sender_mac, 6);
+        append_ln_to_log_file("Sending buffered packet to %s", inet_ntoa(*(struct in_addr *)&arp->sender_ip));
+
+        send_raw_frame(arp->sender_mac, ETH_P_IP, pkt->data, pkt->len, pkt->direction);
+        
+        tmp = pkt;  // Save current packet before deletion
+        HASH_DEL(pending_packets, pkt);
+        free(tmp->data);
+        free(tmp);
+        
+        // Look for more packets for this IP
+        HASH_FIND_INT(pending_packets, &arp->sender_ip, pkt);
+    }
+}
+
+/// End of ARP
+
+
 
 /// Utility Functions:
 
@@ -250,8 +382,8 @@ int is_local_bound_packet(uint32_t dst_ip, uint32_t src_ip) {
 
 // Checks if src MAC address is of the WAN iface.
 int is_packet_outgoing(struct ethernet_header *eth_header){
-    // wan_mac is loaded at the start of the application.
-    return memcmp(eth_header->src_mac, wan_mac, 6) == 0;
+    // wan_machine_mac is loaded at the start of the application.
+    return memcmp(eth_header->src_mac, wan_machine_mac, 6) == 0;
 }
 
 // Allocates a port incrementally.
@@ -276,16 +408,35 @@ uint16_t allocate_port(uint8_t protocol) {
     return candidate;  
 }  
 
-void get_machines_wan_mac(const char *iface) {  
+void get_machine_mac(const char *iface, char* mac) {  
     int fd = socket(AF_INET, SOCK_DGRAM, 0);  
     struct ifreq ifr;  
 
     strncpy(ifr.ifr_name, iface, IFNAMSIZ);  
     ioctl(fd, SIOCGIFHWADDR, &ifr);  
-    memcpy(wan_mac, ifr.ifr_hwaddr.sa_data, 6);  
+    memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);  
 
     close(fd);  
-}  
+}
+
+uint32_t get_default_gateway_ip(const char *interface) {
+    FILE *f = fopen("/proc/net/route", "r");
+    if (!f) return 0;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        char iface[32];
+        unsigned long dest, gateway;
+        if (sscanf(line, "%31s %lx %lx", iface, &dest, &gateway) == 3) {
+            if (dest == 0 && strcmp(iface, interface) == 0) {
+                fclose(f);
+                // Convert from little-endian to network byte order
+                return htonl(gateway);
+            }
+        }
+    }
+    fclose(f);
+    return 0; // 0 means not found
+}
 
 
 // Sends binary content to router.
@@ -362,7 +513,7 @@ void append_ln_to_log_file_verbose(const char *msg, ...) {
     va_end(args);
 }
 
-int get_gateway_ip(const char *iface, char *gateway_ip, size_t size) {
+int get_machine_ip(const char *iface, char *gateway_ip, size_t size) {
 
     
     int temp_sock;  // Temporary socket for IP lookup
@@ -390,7 +541,6 @@ int get_gateway_ip(const char *iface, char *gateway_ip, size_t size) {
 }
 
 
-// Using the config files above load the configurations into the NAT table.
 // This should be called once at the start of the program.
 void init_and_load_configurations() {
        
@@ -401,22 +551,30 @@ void init_and_load_configurations() {
     // Interface and socket setup
     wan_raw = init_socket(DEFAULT_WAN_IFACE);
     lan_raw = init_socket(DEFAULT_LAN_IFACE);
-    get_machines_wan_mac(DEFAULT_WAN_IFACE);        // Assigns to wan_mac.
+    get_machine_mac(DEFAULT_WAN_IFACE, wan_machine_mac);        // Assigns to wan_machine_mac.
+    get_machine_mac(DEFAULT_WAN_IFACE, lan_machine_mac);        // Assigns to lan_machine_mac.
+    
+    wan_gateway_ip = htonl(get_default_gateway_ip(DEFAULT_WAN_IFACE));
+    append_ln_to_log_file("[Info] WAN gateway IP: %s", inet_ntoa(*(struct in_addr *)&wan_gateway_ip));
+    send_arp_request(wan_gateway_ip, OUTBOUND); // Send ARP request to get MAC address of the gateway. This will arrive on handle inbound.
     
     // Obsolete: I'm planning on using an ARP table to get MAC from IP.
     // load_wan_next_hop_mac(DEFAULT_WAN_IFACE);
 
-    get_gateway_ip(DEFAULT_WAN_IFACE, wan_machine_ip, sizeof(wan_machine_ip));
-    get_gateway_ip(DEFAULT_LAN_IFACE, lan_machine_ip, sizeof(lan_machine_ip));
+    get_machine_ip(DEFAULT_WAN_IFACE, wan_machine_ip_str, sizeof(wan_machine_ip_str));
+    get_machine_ip(DEFAULT_LAN_IFACE, lan_machine_ip_str, sizeof(lan_machine_ip_str));
     
     struct in_addr addr;
-    inet_pton(AF_INET, wan_machine_ip, &addr);
-    wan_gateway_ip = addr.s_addr;
+    inet_pton(AF_INET, wan_machine_ip_str, &addr);
+    wan_machine_ip = addr.s_addr;
 
-    append_ln_to_log_file("[info] WAN Gateway IP: %s", wan_machine_ip);
-    append_ln_to_log_file("[info] LAN Gateway IP: %s", lan_machine_ip);
+    
+
+    append_ln_to_log_file("[info] WAN iface Machine IP: %s", wan_machine_ip_str);
+    append_ln_to_log_file("[info] LAN iface Machine IP: %s", lan_machine_ip_str);
     
     append_ln_to_log_file("[info] WAN and LAN interfaces ready.");
+    append_ln_to_log_file(NULL);
 
     // If failed, throw a critical error to router and log it.
 }
@@ -463,7 +621,25 @@ int init_socket(char *iface_name){
     return raw_sock;
 }
 
+void send_raw_frame(uint8_t *dest_mac, uint16_t protocol, void *data, size_t len, packet_direction_t direction) {
+    struct sockaddr_ll dest_addr = {0};
+    dest_addr.sll_family = AF_PACKET;
+    dest_addr.sll_protocol = htons(protocol);
+    dest_addr.sll_halen = ETH_ALEN;
+    memcpy(dest_addr.sll_addr, dest_mac, ETH_ALEN);
 
+    // Interface selection
+    const char *ifname = (direction == INBOUND) ? DEFAULT_LAN_IFACE : DEFAULT_WAN_IFACE;
+    dest_addr.sll_ifindex = if_nametoindex(ifname);
+
+    // MAC assignment
+    uint8_t *src_mac = (direction == INBOUND) ? lan_machine_mac : wan_machine_mac;
+    memcpy(((struct ethernet_header*)data)->src_mac, src_mac, 6);
+
+    // Socket selection
+    int sock = (direction == INBOUND) ? lan_raw : wan_raw;
+    sendto(sock, data, len, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+}
 
 // Flow: From LAN to WAN => 192.168.20.2 -> 172.217.215.102
 void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
@@ -473,6 +649,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     struct ethernet_header *eth_header = &eth_frame->header;
 
     append_ln_to_log_file("Handle outbound: Ethernet header type: %u", ntohs(eth_header->type));
+    
     
     if(ntohs(eth_header->type) != IPV4_ETH_TYPE) return;  // Anything other than IPv4 SHALL NOT PASS!
     
@@ -491,7 +668,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     if (is_local_bound_packet(dst_ip, src_ip) == 1){
         append_ln_to_log_file("NAT: Packet is local bound, not processing.");
         return;
-    }
+    }    
 
     struct nat_entry *incoming_packet_details = malloc(sizeof(struct nat_entry));
 
@@ -589,7 +766,6 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             ip_header->saddr = translated_nat_entry->trans_ip;
             
             udp_h->sport = htons(translated_nat_entry->trans_port);
-            udp_h->dport = htons(dport);
         
             // Recompute checksum with new ports and IP
             udp_h->check = 0;
@@ -624,30 +800,28 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
 
     // Update Ethernet headers for WAN interface
     uint8_t wan_mac_1[6] = {0x08, 0x00, 0x27, 0x03, 0x44, 0xa4}; // 10.0.2.15
-    memcpy(eth_header->src_mac, wan_mac_1, 6);
+    memcpy(eth_header->src_mac, wan_machine_mac, 6);
     
-    uint8_t dst_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02}; // 10.0.2.2
-    memcpy(eth_header->dst_mac, dst_mac, 6); // Set destination MAC to WAN MAC
+    // uint8_t dst_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02}; // 10.0.2.2
 
-    struct sockaddr_ll dest_addr = {
-        .sll_family = AF_PACKET,
-        .sll_protocol = htons(ETH_P_ALL),
-        .sll_ifindex = if_nametoindex("enp0s3"),  // Replace with WAN interface
-        .sll_halen = ETH_ALEN,
-        .sll_addr = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02} // Broadcast MAC
-        // 08 00 27 03 44 a4  // 10.0.2.15
-    };
-    // Send the packet to the WAN interface.
-    ssize_t sent_bytes = sendto(wan_raw, buffer, len, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
-    if (sent_bytes < 0) {
-        char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), 
-            "NAT: Send failed: %s (errno=%d)", 
-            strerror(errno), errno);
-        append_ln_to_log_file(err_msg);
+    // Check ARP cache for gateway MAC
+    struct arp_cache_entry *entry;
+    HASH_FIND_INT(arp_cache, &wan_gateway_ip, entry);
+    
+    if (entry) {
+        // MAC known - send immediately
+        memcpy(eth_header->dst_mac, entry->mac, 6);
+        send_raw_frame(entry->mac, ETH_P_IP, eth_frame, len, OUTBOUND);
+        append_ln_to_log_file("NAT: Sent packet to known MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+                                entry->mac[0], entry->mac[1], entry->mac[2],
+                                entry->mac[3], entry->mac[4], entry->mac[5]);
+    } else {
+        // Buffer translated packet and request MAC
+        buffer_packet(eth_frame, len, wan_gateway_ip, OUTBOUND);
+        send_arp_request(wan_gateway_ip, OUTBOUND);
+        append_ln_to_log_file("NAT: Buffered packet awaiting ARP resolution");
     }
-    append_ln_to_log_file("NAT: Sent %zd bytes to WAN interface.", sent_bytes);
-    append_ln_to_log_file("NAT: Outbound packet sent to WAN interface.");
+
     append_ln_to_log_file(NULL);
 
     // https://www.rfc-editor.org/rfc/rfc4787#section-4.3 for timeouts.
@@ -671,8 +845,14 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
         append_ln_to_log_file_verbose("[Verbose] [info] Outbound packet, not processing.");
         return;
     }
-    
-    if(ntohs(eth_header->type) != IPV4_ETH_TYPE) return;  // Anything other than IPv4 SHALL NOT PASS!
+
+    uint16_t eth_type_host = ntohs(eth_header->type);
+    if (eth_type_host == ARP_ETH_TYPE){
+        handle_arp_reply(buffer, len);
+    }
+    else if (eth_type_host != IPV4_ETH_TYPE){
+        return;
+    }    
     
     // Get IP packet and header.
     struct ipv4_packet *ip_packet = extract_ipv4_packet_from_eth_payload(&eth_frame->payload);
