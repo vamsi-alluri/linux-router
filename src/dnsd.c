@@ -11,7 +11,7 @@
 #include <net/if.h>
 
 #define DNS_PORT 53              // Well-known port
-#define LOOKUP_PORT 34534        // Arbitrary unused port & ignored by NAT
+#define LOOKUP_PORT 31534        // Arbitrary unused port & ignored by NAT
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 
