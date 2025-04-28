@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -16,8 +17,67 @@
 #define REFRESH_PORT 32432                // Arbitrary unused port & ignored by NAT
 #define DEFAULT_REFRESH 14400             // 4 hours in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
+#define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
+#define DEFAULT_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
 
+static char *log_file_path = DEFAULT_LOG_PATH;
 unsigned char server_hostname[255];
+
+void append_ln_to_log_file_ntp(const char *msg, ...) {
+    
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file_ntp(msg, args);
+    va_end(args);
+}
+
+void append_ln_to_log_file_ntp_verbose(const char *msg, ...) {
+    // if (verbose != 1) return;
+
+    // va_list args;
+    // va_start(args, msg);
+    // vappend_ln_to_log_file_ntp(msg, args);
+    // va_end(args);
+}
+
+static void vappend_ln_to_log_file_ntp(const char *msg, va_list args) {
+
+    // Clean up the log file if the size is more than 10 MB.
+    va_list argp;  
+
+    FILE *log_file = fopen(log_file_path, "r");
+    if (log_file) {
+        fseek(log_file, 0, SEEK_END);
+        long file_size = ftell(log_file);
+        fclose(log_file);
+        
+        if (file_size > MAX_LOG_SIZE) {
+            clear_log_file();
+            append_ln_to_log_file_ntp("Log file size exceeded %d bytes.", MAX_LOG_SIZE);
+        }
+    }
+
+    if (msg == NULL || strcmp("", msg) == 0){
+        log_file = fopen(log_file_path, "a");
+        if (log_file) {
+            fprintf(log_file, "\n");
+            fclose(log_file);
+        }
+        return;
+    }
+
+    time_t now = time(NULL);
+    char buffer[26];
+    strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
+    
+    log_file = fopen(log_file_path, "a");
+    if (log_file) {
+        fprintf(log_file, "[%s] ", buffer);
+        vfprintf(log_file, msg, args);
+        fprintf(log_file, "\n");
+        fclose(log_file);
+    }
+}
 
 void ntp_main(int rx_fd, int tx_fd)
 {
@@ -37,7 +97,7 @@ void ntp_main(int rx_fd, int tx_fd)
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
     {
-        perror("socket");
+        append_ln_to_log_file_ntp("socket");
         return;
     }
 
@@ -47,21 +107,21 @@ void ntp_main(int rx_fd, int tx_fd)
 
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0)
     {
-        perror("setsockopt");
+        append_ln_to_log_file_ntp("setsockopt");
         close(s);
         return;
     }
 
     if (flags = fcntl(s, F_GETFL) < 0)
     {
-        perror("F_GETFL");
+        append_ln_to_log_file_ntp("F_GETFL");
         close(s);
         return;
     }
     flags |= O_NONBLOCK;
     if (fcntl(s, F_SETFL, flags) < 0)
     {
-        perror("F_SETFL");
+        append_ln_to_log_file_ntp("F_SETFL");
         close(s);
         return;
     }
@@ -73,13 +133,13 @@ void ntp_main(int rx_fd, int tx_fd)
 
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0)
     {
-        perror("bind");
+        append_ln_to_log_file_ntp("bind");
         close(s);
         return;
     }
 
     // system("clear");
-    printf("...This is NTP server (Non-Blocking Version) listening on port %d...\n\n", NTPD_PORT);
+    append_ln_to_log_file_ntp("...This is NTP server (Non-Blocking Version) listening on port %d...\n\n", NTPD_PORT);
 
     struct timeval tv = {5, 0}; // 5 seconds, 0 microseconds
     fd_set rfds;
@@ -97,7 +157,7 @@ void ntp_main(int rx_fd, int tx_fd)
 
         if (select_ret = select(s + 1, &rfds, NULL, NULL, &tv) < 0)
         {
-            perror("select");
+            append_ln_to_log_file_ntp("select");
             continue;
         }
         else if (select_ret == 0)
@@ -141,21 +201,21 @@ void ntp_main(int rx_fd, int tx_fd)
             if ((recv_len = recvfrom(s, &in_packet, sizeof(in_packet), 0,
                                      (struct sockaddr *)&cli_addr, &slen)) < 0)
             {
-                perror("recvfrom");
+                append_ln_to_log_file_ntp("recvfrom");
                 continue;
             }
 
-            printf("Received packet from %s, port number:%d\n",
+            append_ln_to_log_file_ntp("Received packet from %s, port number:%d\n",
                    inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
             if (in_packet.mode != 3)
             {
-                perror("ignore non client ntp request");
+                append_ln_to_log_file_ntp("ignore non client ntp request");
                 continue;
             }
             if (in_packet.vn != 4)
             {
-                perror("version number of request not 4, but still reply");
+                append_ln_to_log_file_ntp("version number of request not 4, but still reply");
             }
 
             // Contruct reply
@@ -171,11 +231,11 @@ void ntp_main(int rx_fd, int tx_fd)
             if ((send_len = sendto(s, &out_packet, sizeof(out_packet), 0,
                                    (struct sockaddr *)&cli_addr, slen)) < 0)
             {
-                perror("sendto");
+                append_ln_to_log_file_ntp("sendto");
                 continue;
             }
 
-            printf("Sent packet to %s, port number:%d\n",
+            append_ln_to_log_file_ntp("Sent packet to %s, port number:%d\n",
                    inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
         }
     }
@@ -197,7 +257,7 @@ time_t refresh_time()
     int sock = socket(PF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
-        perror("cannot create socket\n");
+        append_ln_to_log_file_ntp("cannot create socket\n");
         return time(NULL);
     }
 
@@ -209,41 +269,40 @@ time_t refresh_time()
     struct hostent *hostinfo = gethostbyname(server_hostname);
     if (hostinfo == 0)
     {
-        perror(server_hostname);
-        perror(" is invalid host\n");
+        append_ln_to_log_file_ntp("%s is invalid host\n", server_hostname);
         return time(NULL);
     }
     saddr.sin_addr.s_addr = *((unsigned int *)(hostinfo->h_addr_list[0]));
     if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
     {
-        perror("cannot connect refresh\n");
+        append_ln_to_log_file_ntp("cannot connect refresh\n");
         return time(NULL);
     }
 
-    printf("Sending refresh to host %s, port number:%d\n",
+    append_ln_to_log_file_ntp("Sending refresh to host %s, port number:%d\n",
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
     // Sends the request to the server. (Use send() instead of sendto())
     if (send(sock, &refresh_packet, sizeof(ntp_packet), 0) < 0)
     {
-        perror("send refresh\n");
+        append_ln_to_log_file_ntp("send refresh\n");
         return time(NULL);
     }
 
     int reply_length = recv(sock, &refresh_packet, sizeof(ntp_packet), 0);
     if (reply_length != sizeof(ntp_packet))
     {
-        perror("recv refresh\n");
+        append_ln_to_log_file_ntp("recv refresh\n");
         return time(NULL);
     }
 
-    printf("Received refresh from host %s, port number:%d\n",
+    append_ln_to_log_file_ntp("Received refresh from host %s, port number:%d\n",
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
     // Extract time from packet and update local time
     unsigned long newTimeSec = ntohl((unsigned int)(refresh_packet.xmt >> 32)) - NTP_TIMESTAMP_DELTA;
 
-    printf("Server time: %ld (Unix seconds)\n", newTimeSec);
+    append_ln_to_log_file_ntp("Server time: %ld (Unix seconds)\n", newTimeSec);
 
     // Set local time to retrieved time
     struct timeval tv;
@@ -252,7 +311,7 @@ time_t refresh_time()
 
     if (settimeofday(&tv, NULL) < 0)
     {
-        perror("settimeofday\n");
+        append_ln_to_log_file_ntp("settimeofday\n");
         return time(NULL);
     }
     return time(NULL);

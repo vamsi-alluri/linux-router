@@ -53,5 +53,8 @@ void clean_table(bool shutdown);
 int get_domain(dns_entry *map, int offset, unsigned char  *buffer, bool authority);
 int process_packet(dns_hdr *hdr, unsigned char  *buffer);
 int process_query(dns_hdr *hdr, unsigned char  *buffer);
+void append_ln_to_log_file_dns(const char *msg, ...);
+void append_ln_to_log_file_dns_verbose(const char *msg, ...);
+static void vappend_ln_to_log_file_dns(const char *msg, va_list args);
 
 #endif /* DNSD_H */
