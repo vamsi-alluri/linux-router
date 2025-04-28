@@ -430,15 +430,15 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        if (FD_ISSET(STDIN_FILENO, &readfds)) {
-            handle_cli_input(services, argv);
-        }
-
         for (int i = 0; i < NUM_SERVICES; i++) {
             if (services[i].running && FD_ISSET(services[i].svc_to_router[0], &readfds)) {
                 handle_service_response(i, services[i].svc_to_router[0]);
                 services[i].running = is_service_running(&services[i]);
             }
+        }
+
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            handle_cli_input(services, argv);
         }
     }
 
