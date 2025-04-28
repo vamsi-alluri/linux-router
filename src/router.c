@@ -34,7 +34,7 @@ typedef struct {
     int svc_to_router[2];
     bool running;
     char name[5];
-    void (* main_func)(int, int);
+    void (* main_func)(int, int, int);
 } service_t;
 
 typedef struct {
@@ -105,7 +105,7 @@ static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *na
 }
 
 void start_service(service_t *svc, char *argv[]) {
-    void (*entry)(int, int) = svc->main_func;
+    void (*entry)(int, int, int) = svc->main_func;
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -131,7 +131,7 @@ void start_service(service_t *svc, char *argv[]) {
         // Notify router we're ready
         // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
-        entry(svc->router_to_svc[0], svc->svc_to_router[1]);
+        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose);
         
         
         close(svc->router_to_svc[0]); // Close pipes before exit
@@ -206,11 +206,11 @@ void cleanup_services(service_t *services) {
 
 // This function shows the process as running and the next process as dead.
 bool is_service_running(service_t *svc) {
-    print_verboseln("is_service_running pid: %d", svc->pid);
+    // print_verboseln("is_service_running pid: %d", svc->pid);
     if ((svc->pid) > 0){
         // Kill 0 returns 0 if the process is running.
         int result_from_kill = kill((svc->pid), 0); 
-        print_verboseln("Result from kill: %d", result_from_kill);
+        // print_verboseln("Result from kill: %d", result_from_kill);
         return !result_from_kill;
     }
     return false;
@@ -335,7 +335,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
                 }
             } else if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
-                fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
+                //fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
@@ -392,7 +392,7 @@ int main(int argc, char *argv[]) {
 
     // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
-    void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
+    void (*entries[4])(int, int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
 
     // Start all services
