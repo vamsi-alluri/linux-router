@@ -154,6 +154,9 @@ void ntp_main(int rx_fd, int tx_fd)
     fd_set rfds;
     while (true)
     {
+        tv.tv_sec = 5;  // Reset timeout before each select call
+        tv.tv_usec = 0;
+
         FD_ZERO(&rfds);
         FD_SET(s, &rfds);
         FD_SET(rx_fd, &rfds);
@@ -164,11 +167,9 @@ void ntp_main(int rx_fd, int tx_fd)
             last_refresh = refresh_time();
         }
 
-        int max_fd = rx_fd;
-        if (s > max_fd) max_fd = s;
-        if (select_ret = select(max_fd + 1, &rfds, NULL, NULL, &tv) < 0)
-        {
-            append_ln_to_log_file_ntp("select");
+        int ready = select(((s > rx_fd) ? s : rx_fd) + 1, &rfds, NULL, NULL, &tv);
+        if (ready < 0) {
+            append_ln_to_log_file_dns("select");
             continue;
         }
         // else if (select_ret == 0)
