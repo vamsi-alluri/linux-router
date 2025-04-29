@@ -1,4 +1,4 @@
-# debian-router
+# linux-router
 
 Capabilities: NAPT, DHCP, NTP, DNS, CLI Management App
 
@@ -10,13 +10,66 @@ Capabilities: NAPT, DHCP, NTP, DNS, CLI Management App
 ### Note for using verbose mode: 
 Use `print_verbose_ln` to print debug messages.
 
+### DHCP Implementation:
+The router includes a full-featured DHCP server with the following capabilities:
+- Automatic IP address allocation from configurable subnet (default 192.168.10.0/24)
+- Support for all standard DHCP message types (DISCOVER, OFFER, REQUEST, ACK, NAK, RELEASE)
+- Lease management with configurable lease time
+- Concurrent request handling using multi-threading
+- Thread-safe operations with mutex protection
+
+#### DHCP CLI Commands:
+- `status` - Shows current DHCP server status including active leases and threads
+- `list_leases` - Displays all active DHCP leases with IP, MAC, and expiration time
+- `shutdown` - Gracefully terminates the DHCP service
+
+### NAT - Network Address and Port Translation
+
+Implemented in `napt.c`, `napt.h` with helper files `napt_helper.c`, `napt_helper.h`.
+
+**Definitions:**
+- Inbound: Traffic coming from the internet to the local network.
+- Outbound: Traffic going from the local network to the internet.
+
+
+## Available commands:
+Additions Pending
+
+
+## Configuration:
+
+The configuration is flushed to disk on shut down or on a change to the configuration and is loaded from the file on boot.
+
+`nat_config.ini` is at `<base directory>/nat/`.
+
+Example configuration:
+```
+[global]
+public_ip = 203.0.113.5
+port_start = 60000
+port_end = 65000
+tcp_timeout = 60
+udp_timeout = 5
+icmp_timeout = 60
+log_path = /var/log/natd.log
+max_log_size = 10485760
+
+[interfaces]
+enp0s8 = lan
+enp0s3 = wan
+
+[static]
+192.168.1.100:80 = 203.0.113.5:8080  # TCP
+192.168.1.101:* = 203.0.113.5:*      # All ports
+```
+
 
 Architecture decided \[Updated over time, add/update as you please.\]:
 For the sake of reusing, I'm naming the program that's gonna boot up services as `Router` 
 
-- Router boots up DHCP, NAT, DNS, NTP and CLI. (Not yet sure if we need pipes for NTP.)
+- Router boots up DHCP, NAT, DNS, and NTP as daemons.
 - Router program sets up the piping file descriptor for other programs to communicate.
-- And it idles (Think if we could detact the processes from Router and end Router program.)
+- And it idles as a cli program to manage the daemons.
 
 Things to read:
 - Multi Threads and processes 
@@ -29,3 +82,6 @@ Questions on exception handling:
 Due to the main router function requirements, the main function of each service exlcuding the router main function must write its pid back to the router main function, so as to both update the router main function that the service has started and to get its pid for accurate shutdown.
 
 If you are planning to add a router specific command that is not in relation to a service, make sure you add it to the help print.
+
+## NTP:
+In order for the NTP time syncronization to be done exclusively by the NTP server, you must run this code to disable the `systemd-timesyncd` process that will automatically do NTP syncronization as a built in part of Debian OS: `sudo systemctl stop systemd-timesyncd`, `sudo systemctl disable systemd-timesyncd`, `sudo systemctl mask systemd-timesyncd`. You can check if it is running before and after with `sudo systemctl status systemd-timesyncd`.

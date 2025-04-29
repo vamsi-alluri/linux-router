@@ -12,6 +12,9 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 
 // Service headers
 #include "dhcpd.h"
@@ -34,7 +37,7 @@ typedef struct {
     int svc_to_router[2];
     bool running;
     char name[5];
-    void (* main_func)(int, int);
+    void (* main_func)(int, int, int);
 } service_t;
 
 typedef struct {
@@ -145,7 +148,7 @@ static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *na
 }
 
 void start_service(service_t *svc, char *argv[]) {
-    void (*entry)(int, int) = svc->main_func;
+    void (*entry)(int, int, int) = svc->main_func;
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -171,14 +174,12 @@ void start_service(service_t *svc, char *argv[]) {
         // Notify router we're ready
         // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
-        entry(svc->router_to_svc[0], svc->svc_to_router[1]);
+        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose);
         
         
         close(svc->router_to_svc[0]); // Close pipes before exit
         close(svc->svc_to_router[1]);
-
-
-        exit(EXIT_SUCCESS);
+        exit(EXIT_FAILURE);           // If it reaches this point it should be a failure
     } 
     else { // Router process
         close(svc->router_to_svc[0]); // Close unused pipes
@@ -188,7 +189,7 @@ void start_service(service_t *svc, char *argv[]) {
         pid_t child_pid;
         if (read(svc->svc_to_router[0], &child_pid, sizeof(pid_t)) > 0) {
             svc->running = true;
-            svc->pid = child_pid;    
+            svc->pid = child_pid;
             printf("Service %s (PID %d) started\n", svc->name, svc->pid);
         }
     }
@@ -248,11 +249,11 @@ void cleanup_services(service_t *services) {
 
 // This function shows the process as running and the next process as dead.
 bool is_service_running(service_t *svc) {
-    print_verboseln("is_service_running pid: %d", svc->pid);
+    // print_verboseln("is_service_running pid: %d", svc->pid);
     if ((svc->pid) > 0){
         // Kill 0 returns 0 if the process is running.
         int result_from_kill = kill((svc->pid), 0); 
-        print_verboseln("Result from kill: %d", result_from_kill);
+        // print_verboseln("Result from kill: %d", result_from_kill);
         return !result_from_kill;
     }
     return false;
@@ -293,6 +294,7 @@ void print_help(service_t *services)
     fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
     fprintf(stderr, "      <service>:start      - Start the specific service\n");
     fprintf(stderr, "      <service>:shutdown   - Shutdown the specific service\n");
+    fprintf(stderr, "  config_ip <iface> <ip> <netmask> - Configure LAN interface\n");
     fprintf(stderr, "  help                - Show this help\n");
     fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
     fprintf(stderr, "  services            - Print what services are running.\n");
@@ -317,6 +319,76 @@ void print_running_services(service_t *services)
     }
 }
 
+
+/* ================= Network Configuration ================= */
+// This function configures the ip address of the given interface with a static IP address and netmask.
+void configure_ip_interface(const char *iface_name, const char *ip_addr, const char *netmask) {
+    int fd;
+    struct ifreq ifr;
+    struct sockaddr_in *addr;
+
+    // Create a socket to perform ioctl calls
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // Bring interface up
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) == -1) {
+        perror("SIOCGIFFLAGS");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+    ifr.ifr_flags |= IFF_UP;
+    if (ioctl(fd, SIOCSIFFLAGS, &ifr) == -1) {
+        perror("SIOCSIFFLAGS");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set IP address
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+    addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    addr->sin_family = AF_INET;
+    // Use the provided ip_addr argument
+    if (inet_pton(AF_INET, ip_addr, &addr->sin_addr) <= 0) {
+        fprintf(stderr, "Error: Invalid IP address format '%s'\n", ip_addr);
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ioctl(fd, SIOCSIFADDR, &ifr) == -1) {
+        perror("SIOCSIFADDR");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set netmask
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+    addr = (struct sockaddr_in *)&ifr.ifr_netmask; // Use ifr_netmask here
+    addr->sin_family = AF_INET;
+    // Use the provided netmask argument
+    if (inet_pton(AF_INET, netmask, &addr->sin_addr) <= 0) {
+        fprintf(stderr, "Error: Invalid netmask format '%s'\n", netmask);
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ioctl(fd, SIOCSIFNETMASK, &ifr) == -1) {
+        perror("SIOCSIFNETMASK");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd);
+    fprintf(stderr, "Successfully configured %s with %s/%s\n", iface_name, ip_addr, netmask);
+}
+
 /* ================= Command Handling ================= */
 void handle_service_response(int service_id, int fd) {
     char buffer[256];
@@ -324,7 +396,7 @@ void handle_service_response(int service_id, int fd) {
     if (count > 0) {
         
         fprintf(stderr, "\33[2K\r");
-        printf("[Service %d] %.*s", service_id, (int)count, buffer);
+        fprintf(stderr, "[Service %d] %.*s", service_id, (int)count, buffer);
         fprintf(stderr, "\nroot@router# ");
     }
     
@@ -377,7 +449,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
                 }
             } else if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
-                fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
+                //fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
@@ -402,6 +474,18 @@ void handle_cli_input(service_t *services, char * argv[]) {
             print_running_services(services);
             fprintf(stderr, "root@router# "); 
             return;
+        }
+        else if (strncmp(raw_cmd, "config_ip ", 10) == 0) {
+            char *args = raw_cmd + 10; // point past "config_ip"
+            char *iface = strtok(args, " ");
+            char *ip = strtok(NULL, " ");
+            char *mask = strtok(NULL, " ");
+
+            if (iface && ip && mask) {
+                configure_ip_interface(iface, ip, mask);
+            } else {
+                fprintf(stderr, "Usage: config_ip <interface> <ip_address> <netmask>\n");
+            }
         }
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
@@ -434,8 +518,14 @@ int main(int argc, char *argv[]) {
 
     setup_config();
 
+    // Configure the LAN interface with a static IP address and netmask
+    // Warning!: This is a placeholder. 
+    // You should replace "enp0s8" with your actual interface name.
+    //configure_lan_interface("enp0s8", "192.168.10.1", "255.255.255.0");
+
+    // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
-    void (*entries[4])(int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
+    void (*entries[4])(int, int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
 
     // Start all services
@@ -473,15 +563,15 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        if (FD_ISSET(STDIN_FILENO, &readfds)) {
-            handle_cli_input(services, argv);
-        }
-
         for (int i = 0; i < NUM_SERVICES; i++) {
             if (services[i].running && FD_ISSET(services[i].svc_to_router[0], &readfds)) {
                 handle_service_response(i, services[i].svc_to_router[0]);
                 services[i].running = is_service_running(&services[i]);
             }
+        }
+
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            handle_cli_input(services, argv);
         }
     }
 
