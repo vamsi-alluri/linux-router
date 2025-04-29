@@ -416,7 +416,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     append_ln_to_log_file_dns("Not found in table...\n");
 
     // If recursion is not desired
-    if (notAuthority) {
+    // If authority
+    if (!notAuthority) {
         return -2;
     }
     
