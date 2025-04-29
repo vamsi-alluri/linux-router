@@ -317,7 +317,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
     else if (strcmp(command, "table") == 0) {
         char output[MAX_ENTRIES * 50];  // Big enough for many entries
         int offset = 0;
-        offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address] ...  ||  [Expiry Time]  )\n");
+        offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address 1] == [IPv4 Address 2] ...  ||  [Expiry Time]  )\n");
 
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
@@ -329,7 +329,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
 
             for (int i = 0; i < curr->entry.numIp; i++) {
                 offset += snprintf(output + offset, sizeof(output) - offset, "%d.%d.%d.%d", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
-                if (i + 1 < curr->entry.numIp) offset += snprintf(output + offset, sizeof(output) - offset, " & ");
+                if (i + 1 < curr->entry.numIp) offset += snprintf(output + offset, sizeof(output) - offset, " == ");
             }
        
             time_t ttl_time = curr->entry.ttl;
