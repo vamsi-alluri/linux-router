@@ -138,7 +138,7 @@ void dns_main(int rx_fd, int tx_fd){
 
     memset((char *)&ser_addr, 0, sizeof(ser_addr));
     ser_addr.sin_family = AF_INET;
-    ser_addr.sin_port = htons(LOOKUP_PORT);
+    ser_addr.sin_port = htons(DNS_PORT);
     ser_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind socket to a unsurveiled port by NAT
@@ -447,7 +447,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
 
     memset((char *)&sock_addr, 0, sizeof(sock_addr));
     sock_addr.sin_family = AF_INET;
-    sock_addr.sin_port = htons(DNS_PORT);
+    sock_addr.sin_port = htons(LOOKUP_PORT);
     sock_addr.sin_addr.s_addr = htonl(dns_ip);
 
     if (bind(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
@@ -455,6 +455,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
         close(sock);
         return -1;
     }
+
+    append_ln_to_log_file_dns("...This is DNS server (Upstream Version) listening on port %d...\n\n", LOOKUP_PORT);
 
     // Setup Ends here
 
