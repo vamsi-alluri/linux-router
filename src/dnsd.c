@@ -315,7 +315,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         write(tx_fd, "DNS: Updated Upstream DNS IPv4 Address\n", 39);
     }
     else if (strcmp(command, "table") == 0) {
-        write(tx_fd, "DNS: Table Entries (Format:  Domain Name  ||  IPv4 Address(es)  ||  TTL  )\n", 76);
+        write(tx_fd, "DNS: Table Entries (Format:  Domain Name  ||  IPv4 Address(es)  ||  TTL  )\n", 75);
 
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
@@ -324,11 +324,11 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         while (start != curr) {
             // TODO: display info for each entry
             // Translate DN to printable form
-            // unsigned char domain[MAX_DN_LENGTH];
-            // memset(domain, 0, MAX_DN_LENGTH);
-            // process_domain(0, curr->entry.domain, domain, 0);
-            // write(tx_fd, domain, strlen(domain));
-            write(tx_fd, curr->entry.domain, strlen(curr->entry.domain));
+            unsigned char domain[MAX_DN_LENGTH];
+            memset(domain, 0, MAX_DN_LENGTH);
+            process_domain(0, curr->entry.domain, domain, 0);
+            write(tx_fd, domain, strlen(domain));
+            // write(tx_fd, curr->entry.domain, strlen(curr->entry.domain));
             write(tx_fd, "  ||  ", 6);
 
             for (int i = 0; i < curr->entry.numIp; i++) {
@@ -343,7 +343,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             char buffer[26];
             strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
             write(tx_fd, buffer, strlen(buffer));
-            write(tx_fd, "\n", 2);
+            write(tx_fd, "\n", 1);
 
             // Move on to the next entry
             prev = curr;
