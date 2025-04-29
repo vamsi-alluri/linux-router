@@ -367,7 +367,7 @@ unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp,
 
     for (int i = 0; i < numIp; ++i) {
         for (int j = 0; j < IP_LENGTH; ++j) {
-            append_ln_to_log_file_dns("before forloop ip iteration %d %d...\n", i, j);
+            append_ln_to_log_file_dns("before forloop ip with ip[i][j] %d...\n", ip[i][j]);
             domain_table[index]->entry.ip[i][j] = ip[i][j];
             append_ln_to_log_file_dns("after forloop ip iteration %d %d...\n", i, j);
         }
