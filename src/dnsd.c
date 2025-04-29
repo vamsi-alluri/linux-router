@@ -366,9 +366,11 @@ unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp,
     domain_table[index]->entry.numIp = numIp;
 
     for (int i = 0; i < numIp; ++i) {
-        append_ln_to_log_file_dns("before forloop ip iteration %d...\n", i);
-        memcpy(domain_table[index]->entry.ip[i], ip[i], IP_LENGTH);
-        append_ln_to_log_file_dns("after forloop ip iteration %d...\n", i);
+        for (int j = 0; j < IP_LENGTH; ++j) {
+            append_ln_to_log_file_dns("before forloop ip iteration %d %d...\n", i, j);
+            domain_table[index]->entry.ip[i][j] = ip[i][j];
+            append_ln_to_log_file_dns("after forloop ip iteration %d %d...\n", i, j);
+        }
     }
 
     domain_table[index]->entry.ttl = !alias ? time(NULL) + DEFAULT_TTL : LONG_MAX;
