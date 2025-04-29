@@ -364,10 +364,12 @@ unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp,
     strncpy(domain_table[index]->entry.domain, domain, strlen(domain));
     domain_table[index]->entry.domain[strlen(domain)] = '\0';
     domain_table[index]->entry.numIp = numIp;
-    append_ln_to_log_file_dns("before forloop ip with %d iterations...\n", numIp);
 
-    for (int i = 0; i < numIp; ++i) memcpy(domain_table[index]->entry.ip[i], ip[i], IP_LENGTH);
-    append_ln_to_log_file_dns("after forloop ip...\n");
+    for (int i = 0; i < numIp; ++i) {
+        append_ln_to_log_file_dns("before forloop ip iteration %d...\n", i);
+        memcpy(domain_table[index]->entry.ip[i], ip[i], IP_LENGTH);
+        append_ln_to_log_file_dns("after forloop ip iteration %d...\n", i);
+    }
 
     domain_table[index]->entry.ttl = !alias ? time(NULL) + DEFAULT_TTL : LONG_MAX;
     domain_table[index]->next = domain_table[0]->next;
