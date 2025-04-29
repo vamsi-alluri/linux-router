@@ -357,21 +357,18 @@ unsigned long get_hash(unsigned char *domain) {
 
 // This must ONLY be used if the domain name does not have an entry currently
 unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp, bool alias) {
-    append_ln_to_log_file_dns("before hash...\n");
-
     unsigned long index = get_hash(domain);
     while (domain_table[index]) index++;     // Linear probing
-    
-    append_ln_to_log_file_dns("before malloc...\n");
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
     memset(domain_table[index], 0, sizeof(dns_bucket));
     strncpy(domain_table[index]->entry.domain, domain, strlen(domain));
     domain_table[index]->entry.domain[strlen(domain)] = '\0';
-    
-    append_ln_to_log_file_dns("after strncpy...\n");
-
     domain_table[index]->entry.numIp = numIp;
+    append_ln_to_log_file_dns("before forloop ip...\n");
+
     for (int i = 0; i < numIp; ++i) strncpy(domain_table[index]->entry.ip[i], ip[i], IP_LENGTH);
+    append_ln_to_log_file_dns("after forloop ip...\n");
+
     domain_table[index]->entry.ttl = !alias ? time(NULL) + DEFAULT_TTL : LONG_MAX;
     domain_table[index]->next = domain_table[0]->next;
     domain_table[0]->next = domain_table[index];
