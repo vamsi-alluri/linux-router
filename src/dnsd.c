@@ -16,7 +16,7 @@
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns_log.txt"
+#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 int read_from_router_pipe, write_to_router_pipe;
