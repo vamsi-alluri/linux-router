@@ -370,12 +370,12 @@ int process_domain(unsigned short offset, unsigned char *buffer, unsigned char *
             return offset + 2;
         }
         // Not a pointer (Labels are at most 63 octets so must begin with 2 0 bits)
-        int len = buffer[offset];
-        if (len == '\0') break;
-        offset++;
-        for (int i = 0; i < len; i++) {
-            domain[index++] = buffer[offset++];
+        int i = 0;
+        while (i < buffer[offset]) {
+            domain[index++] = buffer[offset + ++i];
         }
+        offset += ++i;
+        if (buffer[offset] == '\0') break;
         domain[index++] = '.';
     }
     domain[index] = '\0';
