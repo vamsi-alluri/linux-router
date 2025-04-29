@@ -449,10 +449,10 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     memset((char *)&sock_addr, 0, sizeof(sock_addr));
     sock_addr.sin_family = AF_INET;
     sock_addr.sin_port = htons(LOOKUP_PORT);
-    sock_addr.sin_addr.s_addr = htonl(dns_ip);
+    sock_addr.sin_addr.s_addr = dns_ip; // dns_ip already in network byte order
 
     if (bind(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
-        append_ln_to_log_file_dns("bind-upstream");
+        append_ln_to_log_file_dns("bind-upstream failed on port %d and on ip %d", LOOKUP_PORT, ntohl(dns_ip));
         close(sock);
         return -1;
     }

@@ -9,7 +9,7 @@
 #define MAX_IPS 3            
 #define MAX_ENTRIES 256
 #define DEFAULT_TTL 14400    /* 4 hours in seconds */
-#define LOOKUP_IP 0x08080808     // Google DNS IPv4
+#define LOOKUP_IP 0x08080808     // Google DNS IPv4 in Network Byte Order
 
 
 typedef struct
