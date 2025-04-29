@@ -464,7 +464,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // Connects the socket to the server’s IP address and port number
     memset((char *)&sock_addr, 0, sizeof(sock_addr));
     sock_addr.sin_family = AF_INET;
-    sock_addr.sin_port = htons(LOOKUP_PORT);
+    sock_addr.sin_port = htons(DNS_PORT);
     sock_addr.sin_addr.s_addr = dns_ip; // dns_ip already in network byte order
 
     if (connect(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0)
@@ -473,13 +473,17 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         return time(NULL);
     }
 
+    // Set a receive timeout so recv doesn't stall
+    struct timeval utv;
+    utv.tv_sec = 3;  // 3 seconds
+    utv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&utv, sizeof(utv));
+
     // Setup Ends here
 
 
-
-    int send_len, recv_len, slen = sizeof(sock_addr);
-    if ((send_len = sendto(sock, buffer, offset, 0,
-       (struct sockaddr*)&sock_addr, sizeof(sock_addr))) < 0) {
+    int send_len, recv_len;
+    if ((send_len = send(sock, buffer, offset, 0)) < 0) {
         append_ln_to_log_file_dns("sendto-upstream");
         return -1;
     }
@@ -489,9 +493,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // TODO: in case idk u can uncomment
     // memset(buffer, 0, offset);
 
-    if ((recv_len = recvfrom(sock, buffer, BUFFER_SIZE, 0,
-                                (struct sockaddr *)&sock_addr, &slen)) < 0) {
-        append_ln_to_log_file_dns("recvfrom-upstream");
+    if ((recv_len = recv(sock, buffer, BUFFER_SIZE, 0)) < 0) {
+        append_ln_to_log_file_dns("recv-upstream (fail or timeout)");
         return -1;
     }
 

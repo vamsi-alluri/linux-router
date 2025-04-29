@@ -317,6 +317,12 @@ time_t refresh_time()
         return time(NULL);
     }
 
+    // Set a receive timeout so recv doesn't stall
+    struct timeval utv;
+    utv.tv_sec = 3;  // 3 seconds
+    utv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&utv, sizeof(utv));
+
     append_ln_to_log_file_ntp("Sending refresh to host %s, port number:%d\n",
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
