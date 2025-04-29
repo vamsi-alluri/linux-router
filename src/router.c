@@ -436,7 +436,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
             return;
         }
         else if (strncmp(raw_cmd, "config_ip ", 10) == 0) {
-            char *args = raw_cmd + 11; // point past "config_ip"
+            char *args = raw_cmd + 10; // point past "config_ip"
             char *iface = strtok(args, " ");
             char *ip = strtok(NULL, " ");
             char *mask = strtok(NULL, " ");
