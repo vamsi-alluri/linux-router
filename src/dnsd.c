@@ -77,6 +77,9 @@ void dns_main(int rx_fd, int tx_fd){
     struct timeval tv = {5, 0}; // 5 seconds, 0 microseconds
     fd_set rfds;
     while (true) {
+        tv.tv_sec = 5;  // Reset timeout before each select call
+        tv.tv_usec = 0;
+    
         FD_ZERO(&rfds);
         FD_SET(s, &rfds);
         FD_SET(rx_fd, &rfds);
@@ -88,7 +91,7 @@ void dns_main(int rx_fd, int tx_fd){
             last_cleanup = now;  
         }
 
-        if (select_ret = select(s + 1, &rfds, NULL, NULL, &tv) < 0) {
+        if ((select_ret = select(s + 1, &rfds, NULL, NULL, &tv)) < 0) {
             perror("select");
             continue;
         }

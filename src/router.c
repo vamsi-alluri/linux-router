@@ -199,15 +199,14 @@ void cleanup_services(service_t *services) {
     int status;
     for (int i = 0; i < NUM_SERVICES; i++) {
         if (is_service_running(services + i) == true) {
-            waitpid(services[i].pid, &status, 0);
+            fprintf(stderr, "Waiting for the service %s to exit... (5 sec)", services[i].name);
             sleep(5);
             if (is_service_running(services + i)) {
-                printf("Forcibly Killed Service %s (%d), PID %d\n", services[i].name, i, services[i].pid);
+                fprintf(stderr, "Killed [Service %d] %s, PID %d\n", services[i].name, i, services[i].pid);
                 kill(services[i].pid, 9);
-            }
-            
+            }            
         }
-        printf("Service %d exited\n", i);
+        fprintf(stderr, "Service %d exited\n", i);
 
     }
 }
