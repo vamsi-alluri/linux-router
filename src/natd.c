@@ -49,6 +49,14 @@
 #define MAX_BUFFERED_PACKETS 64
 
 typedef enum { INBOUND, OUTBOUND } packet_direction_t;
+typedef enum {
+    NAT_TCP_NEW,
+    NAT_TCP_SYN_SENT,
+    NAT_TCP_SYN_RECEIVED,
+    NAT_TCP_ESTABLISHED,
+    NAT_TCP_CLOSING
+} tcp_state;
+
 
 // Reserved ports (Don't use these for assigning outbound ports to WAN.)
 // 22 to ssh into the linux machine.
@@ -87,6 +95,7 @@ struct nat_entry{
     uint8_t protocol;           // TCP (6), UDP (17), ICMP (1)
     time_t last_used;           // Used for timeout calculations.
     uint16_t custom_timeout;    // Timeout in seconds - Used in overriding situations - they're read through config.
+    tcp_state state;       // To track TCP connections.
 };
 
 
@@ -892,65 +901,99 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             break;
 
         case TCP_IP_TYPE:
+            {
+                append_ln_to_log_file_nat("NAT: Outbound TCP packet.");
 
-            append_ln_to_log_file_nat("NAT: Outbound TCP packet.");
-
-            // append_ln_to_log_file_nat("OUTBOUND BYPASS");
-            // append_ln_to_log_file_nat(NULL);
-            // break;
-
-
-            struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
-            
-            received_packet_details->orig_port = ntohs(tcp_h->sport);
-            translated_dport = ntohs(tcp_h->dport);
-            
-            translated_nat_entry = enrich_entry(received_packet_details, OUTBOUND);
-            if (translated_nat_entry == NULL) {
-                append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+                struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
+    
+                // Validate TCP header length
+                uint16_t dorf = ntohs(tcp_h->data_offset_reserved_flags);
+                size_t doff = (dorf >> 12) & 0xF;
+                uint8_t tcp_header_len = doff * 4; // Convert to bytes
+                
+                if (tcp_header_len < sizeof(struct tcp_header) || tcp_header_len > 60) {
+                append_ln_to_log_file_nat("[Error] Invalid TCP header length: %zu", tcp_header_len);
+                append_ln_to_log_file_nat("data_offset_reserved_flags (hex): 0x%04x\n", dorf);
+                append_ln_to_log_file_nat(NULL);
                 return;
             }
 
-            size_t tcp_header_len = tcp_h->doff * 4;
-            uint8_t *tcp_payload = ip_packet->payload + tcp_header_len;
-            size_t tcp_payload_len = ntohs(ip_header->tot_len) - (ip_header->ihl * 4) - tcp_header_len;
-            
-            // Translation:
-            ip_header->saddr = translated_nat_entry->trans_ip;
-            tcp_h->sport = htons(translated_nat_entry->trans_port);
-            translated_sport = ntohs(tcp_h->sport);            // Only used for logging.
-            translated_dport = ntohs(tcp_h->dport);            // Only used for logging.
+                // Calculate payload parameters
+                uint16_t ip_payload_len = ntohs(ip_header->tot_len) - (ip_header->ihl * 4);
+                size_t tcp_payload_len = ip_payload_len - tcp_header_len;
+                const uint8_t *tcp_payload = (const uint8_t*)tcp_h + tcp_header_len;
 
-            // Recompute checksum with new ports and IP
-            tcp_h->check = 0;
-            uint16_t tcp_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
-            if (tcp_check == 0) tcp_check = 0xFFFF;  // Handle zero case
-            tcp_h->check = tcp_check;
-            append_ln_to_log_file_nat("NAT: TCP checksum: 0x%04" PRIx16, tcp_h->check);
-            append_ln_to_log_file_nat("NAT: TCP checksum after any change: 0x%04" PRIx16, tcp_h->check);
+                // Validate payload access
+                if ((tcp_payload + tcp_payload_len) > (buffer + len)) {
+                    append_ln_to_log_file_nat("[Error] TCP payload exceeds packet buffer");
+                    return;
+                }
 
-            // Check if TCP SYN flag is set
-            // Figure out how to do connection tracking.
-            if (tcp_h->syn) {
-                append_ln_to_log_file_nat("NAT: TCP SYN flag set.");
-                // Handle connection tracking here if needed
-            }
-            else if (tcp_h->ack) {
-                append_ln_to_log_file_nat("NAT: TCP ACK flag set.");
-                // Handle connection tracking here if needed
-            }
-            else if (tcp_h->rst) {
-                append_ln_to_log_file_nat("NAT: TCP RST flag set.");
-                // Handle connection tracking here if needed
-            }
-            else if (tcp_h->fin) {
-                append_ln_to_log_file_nat("NAT: TCP FIN flag set.");
-                // Handle connection tracking here if needed
-            }
-
-
+                // Verify original checksum before translation
+                uint16_t received_check = tcp_h->check;
+                tcp_h->check = 0;
+                uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
     
-            break;
+                if (calculated_check != received_check && received_check != 0) {
+                    append_ln_to_log_file_nat("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
+                                            ntohs(received_check), ntohs(calculated_check));
+                    append_ln_to_log_file_nat(NULL);
+                    return;
+                }
+                append_ln_to_log_file_nat("TCP checksum validated");
+
+                // Create NAT entry
+                struct nat_entry *received_packet_details = malloc(sizeof(struct nat_entry));
+                received_packet_details->orig_ip = ip_header->saddr;
+                received_packet_details->orig_port = ntohs(tcp_h->sport);
+                received_packet_details->protocol = IPPROTO_TCP;
+
+                // Get/Create translation entry
+                struct nat_entry *translated_nat_entry = enrich_entry(received_packet_details, OUTBOUND);
+                if (!translated_nat_entry) {
+                    append_ln_to_log_file_nat("[Error] Failed to create NAT entry");
+                    return;
+                }
+
+                // Perform translation
+                ip_header->saddr = translated_nat_entry->trans_ip;
+                tcp_h->sport = htons(translated_nat_entry->trans_port);
+
+                // Recalculate TCP checksum
+                tcp_h->check = 0;
+                uint16_t tcp_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
+                tcp_h->check = tcp_check;
+                
+                // RFC 5382 connection tracking.
+                uint16_t flags = TCP_FLAGS(tcp_h->data_offset_reserved_flags);
+
+                if (flags & (1 << 4)) {  // ACK (Acknowledgment)
+                    if (translated_nat_entry->state == NAT_TCP_SYN_SENT) {
+                        translated_nat_entry->state = NAT_TCP_ESTABLISHED;
+                    }
+                    translated_nat_entry->last_used = time(NULL);
+                }
+                if (flags & (1 << 6)) {  // RST (Reset)
+                    translated_nat_entry->state = NAT_TCP_CLOSING;
+                    translated_nat_entry->custom_timeout = 60; // 60s FIN_WAIT timeout
+                }
+                if (flags & (1 << 7)) {  // SYN (Synchronize)
+                    translated_nat_entry->state = NAT_TCP_SYN_SENT;
+                    translated_nat_entry->last_used = time(NULL);
+                }
+                if (flags & (1 << 8)) {  // FIN (Finish)
+                    translated_nat_entry->state = NAT_TCP_CLOSING;
+                    translated_nat_entry->custom_timeout = 60; // 60s FIN_WAIT timeout
+                }
+
+                // Verification
+                append_ln_to_log_file_nat("TCP checksum: 0x%04x (calculated)", ntohs(tcp_check));
+                append_ln_to_log_file_nat("NAT mapping: %u -> %u", 
+                    ntohs(received_packet_details->orig_port), 
+                    ntohs(translated_nat_entry->trans_port));
+
+                break;
+            }
 
 
         case UDP_IP_TYPE:{
@@ -1079,12 +1122,11 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     append_ln_to_log_file_nat("NAT: Inbound ipv4 packet.");
 
     uint16_t sport;
-    struct nat_entry *received_packet_details = malloc(sizeof(struct nat_entry));       // Init packet_details.
-    
-    received_packet_details->protocol = ip_header->protocol;
-    received_packet_details->trans_ip = ip_header->daddr;                               // The destination address is machine's ip.
+    struct nat_entry *received_packet_details = malloc(sizeof(struct nat_entry));
 
-    struct nat_entry *enriched_nat_entry;
+    received_packet_details->trans_ip = ip_header->daddr;        // The source address is machine's ip.
+    received_packet_details->protocol = ip_header->protocol;    // IP Protocol.
+        
 
     switch (ip_header->protocol){
         case ICMP_IP_TYPE:
@@ -1113,40 +1155,91 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             }
             break;
         case TCP_IP_TYPE:
-            append_ln_to_log_file_nat("NAT: Inbound TCP packet.");
-            append_ln_to_log_file_nat("INBOUND BYPASS");
-            append_ln_to_log_file_nat(NULL);
-            break;
+        {
             struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
-            uint16_t tcp_len_host = ntohs(ip_header->tot_len) - (ip_header->ihl * 4);
+            append_ln_to_log_file_nat("NAT: Inbound TCP packet.");
+            // Validate TCP header length
+            if (tcp_h->data_offset_reserved_flags == NULL) {
+                append_ln_to_log_file_nat("[Error] Failed to extract TCP header.");
+                append_ln_to_log_file_nat(NULL);
+                return;
+            }
             
-            ///
-
-            received_packet_details->trans_port = ntohs(tcp_h->dport);
-            
-            enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
-            if (enriched_nat_entry == NULL) {
-                append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+            uint16_t dorf = ntohs(tcp_h->data_offset_reserved_flags);
+            size_t doff = (dorf >> 12) & 0xF;
+            uint8_t tcp_header_len = doff * 4; // Convert to bytes
+            if (tcp_header_len < sizeof(struct tcp_header) || tcp_header_len > 60) {
+                append_ln_to_log_file_nat("[Error] Invalid TCP header length: %zu", tcp_header_len);
+                append_ln_to_log_file_nat("data_offset_reserved_flags (hex): 0x%04x\n", dorf);
+                append_ln_to_log_file_nat(NULL);
                 return;
             }
 
-            ip_header->daddr = enriched_nat_entry->orig_ip;
-            tcp_h->dport = htons(enriched_nat_entry->orig_port);
+            // Calculate payload parameters
+            uint16_t ip_payload_len = ntohs(ip_header->tot_len) - (ip_header->ihl * 4);
+            size_t tcp_payload_len = ip_payload_len - tcp_header_len;
+            const uint8_t *tcp_payload = (const uint8_t *)tcp_h + tcp_header_len;
 
-            size_t tcp_header_len = tcp_h->doff * 4;
-            uint8_t *tcp_payload = ip_packet->payload + tcp_header_len;
-            size_t tcp_payload_len = ntohs(ip_header->tot_len) - (ip_header->ihl * 4) - tcp_header_len;
-
-            // Recompute checksum with new ports and IP
+            // Verify original checksum before translation
+            uint16_t received_check = tcp_h->check;
             tcp_h->check = 0;
-            uint16_t tcp_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
-            if (tcp_check == 0) tcp_check = 0xFFFF;  // Handle zero case
-            tcp_h->check = tcp_check;
-            ///
+            uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
+    
+            if (calculated_check != received_check && received_check != 0) {
+                append_ln_to_log_file_nat("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
+                                        ntohs(received_check), ntohs(calculated_check));
+                append_ln_to_log_file_nat(NULL);
+                return;
+            }
+            append_ln_to_log_file_nat("TCP checksum validated");
 
-            // Handle TCP connection state.
+            // Get NAT translation
+            received_packet_details->trans_port = ntohs(tcp_h->dport);
+            struct nat_entry *enriched_entry = enrich_entry(&received_packet_details, INBOUND);
+            if (!enriched_entry) {
+                append_ln_to_log_file_nat("[Error] No NAT entry for TCP port %d", ntohs(tcp_h->dport));
+                append_ln_to_log_file_nat(NULL);
+                return;
+            }
+
+            // Perform translation
+            ip_header->daddr = enriched_entry->orig_ip;
+            tcp_h->dport = htons(enriched_entry->orig_port);
+
+            // Recompute checksums
+            tcp_h->check = 0;
+            uint16_t new_tcp_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
+            tcp_h->check = new_tcp_check;
+
+            // RFC 5382 Connection Tracking (INBOUND)
+            uint16_t flags = TCP_FLAGS(tcp_h->data_offset_reserved_flags);
+    
+            if (flags & (1 << 4)) {  // ACK
+                if (enriched_entry->state == NAT_TCP_SYN_RECEIVED) {
+                    enriched_entry->state = NAT_TCP_ESTABLISHED;
+                }
+                enriched_entry->last_used = time(NULL);
+            }
+            if (flags & (1 << 6)) {  // RST
+                enriched_entry->state = NAT_TCP_CLOSING;
+                enriched_entry->custom_timeout = 60; // 60s timeout
+            }
+            if (flags & (1 << 7)) {  // SYN (unexpected in established connections)
+                if (enriched_entry->state == NAT_TCP_ESTABLISHED) {
+                    // Simultaneous open or connection reset
+                    enriched_entry->state = NAT_TCP_CLOSING;
+                }
+            }
+            if (flags & (1 << 8)) {  // FIN
+                enriched_entry->state = NAT_TCP_CLOSING;
+                enriched_entry->custom_timeout = 60; // 60s FIN_WAIT timeout
+            }
+
+            append_ln_to_log_file_nat("TCP checksum updated: 0x%04x", ntohs(new_tcp_check));
             break;
+        }
         case UDP_IP_TYPE:
+        {
             // Extraction:
             struct udp_header *udp_h = extract_udp_header_from_ipv4_packet(ip_packet);
             uint16_t udp_len_host = ntohs(udp_h->len);
@@ -1159,6 +1252,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
 
             if (!validate_udp_checksum(ip_header, udp_h, udp_payload, udp_payload_len)){
                 append_ln_to_log_file_nat("Inbound: UDP checksum validation failed. Dropping packet.");
+                append_ln_to_log_file_nat(NULL);
                 return;
             }
 
@@ -1182,10 +1276,11 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
                                     dest_ip_str, received_packet_details->trans_port, received_packet_details->protocol);
 
             // Translation:
-            enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
+            struct nat_entry *enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
 
             if (enriched_nat_entry == NULL) {
                 append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+                append_ln_to_log_file_nat(NULL);
                 return;
             }
             
@@ -1199,9 +1294,8 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             udp_h->check = udp_check;
 
             break;
-        default:
-            // Unsupported protocol
-            
+        }
+        default:            // Unsupported protocol
             return;
     }
     
@@ -1230,6 +1324,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
         send_arp_request(ip_header->daddr, INBOUND);
         append_ln_to_log_file_nat("NAT: Buffered packet awaiting ARP resolution");
     }
+    append_ln_to_log_file_nat(NULL);
 
 }
 

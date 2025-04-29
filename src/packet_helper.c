@@ -120,14 +120,15 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
     pseudo_header.zeros = 0;
     pseudo_header.protocol = IPPROTO_TCP;
     pseudo_header.tcp_len = htons(ntohs(ip->tot_len) - (ip->ihl * 4)); // TCP segment length
-
+    
+    uint8_t doff = TCP_DOFF(ntohs(tcp->data_offset_reserved_flags));
     // Create contiguous buffer
-    size_t total_len = sizeof(pseudo_header) + (tcp->doff * 4) + payload_len;
+    size_t total_len = sizeof(pseudo_header) + (doff * 4) + payload_len;
     uint8_t *buf = malloc(total_len);
 
     memcpy(buf, &pseudo_header, sizeof(pseudo_header));
-    memcpy(buf + sizeof(pseudo_header), tcp, tcp->doff * 4); // Include TCP options
-    memcpy(buf + sizeof(pseudo_header) + (tcp->doff * 4), payload, payload_len);
+    memcpy(buf + sizeof(pseudo_header), tcp, doff * 4); // Include TCP options
+    memcpy(buf + sizeof(pseudo_header) + (doff * 4), payload, payload_len);
 
     // Compute checksum
     uint16_t checksum = compute_checksum(buf, total_len);

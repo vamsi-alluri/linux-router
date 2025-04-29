@@ -34,38 +34,25 @@ struct ipv4_packet{
     struct ipv4_header header;
     uint8_t* payload;
 };
-
-// Using only TCP header as we don't need TCP payload for router operations.
-// Consider the memory size from the DATA OFFSET for checksum calculation.
 struct tcp_header {
     uint16_t sport;     // SRC PORT
     uint16_t dport;     // DST PORT
     uint32_t seq;       // SEQ NUMBER
     uint32_t ack_seq;   // ACK NUMBER
     
-    // Data offset and flags (16 bits total)
-    uint16_t doff:4;    // Data offset (header length in 32-bit words)
-    uint16_t res1:3;    // Reserved (unused)
+    // Single 16-bit field for (Data Offset + Reserved + Flags)
+    uint16_t data_offset_reserved_flags;
 
-    // FLAGS (9 bits):
-    uint16_t ns:1;      // ECN Nonce (RFC 3540)
-    uint16_t cwr:1;     // Congestion Window Reduced
-    uint16_t ece:1;     // ECN-Echo
-    uint16_t urg:1;     // URGENT
-    uint16_t ack:1;     // ACKNOWLEDGEMENT
-    uint16_t psh:1;     // PUSH
-    uint16_t rst:1;     // RESET
-    uint16_t syn:1;     // SYNCHORIZE
-    uint16_t fin:1;     // FINISH
-    
-    uint16_t window;    // Receive window size
+    // Split into bitfields (helper functions)
+    #define TCP_DOFF(data) (((data) >> 12) & 0xF)    // Data offset (4 bits)
+    #define TCP_FLAGS(data) ((data) & 0x1FFF)        // Flags (13 bits)
+
+    uint16_t window;    // Window size
     uint16_t check;     // Checksum
-    uint16_t urg_ptr;   // Urgent pointer (iff URG flag set)
-    // OPTIONS start from here and are of arbitrary length, it's definied with padding. Handle them as necessary.
-    // You can find the data start using data offset value.
+    uint16_t urg_ptr;   // Urgent pointer
+    // Options handled via data offset calculation
 };
 
-// Using only UDP header as we don't need UDP payload for router operations.
 // Consider the memory size from the DATA LENGTH for checksum calculation.
 struct udp_header {
     uint16_t sport;     // SRC PORT
@@ -132,6 +119,7 @@ void reassemble_ethernet(const struct raw_ethernet_frame frame, const struct eth
                              const struct ipv4_header* ip, const struct tcp_header* transport_header, 
                              const uint8_t* payload, size_t payload_len);
 
+void update_ip_checksum(struct ipv4_header* ip);
 uint16_t compute_checksum(const void* data, size_t len);
 uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len);
 uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len);
