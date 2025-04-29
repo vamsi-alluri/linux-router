@@ -356,7 +356,7 @@ unsigned long get_hash(unsigned char *domain) {
 }
 
 // This must ONLY be used if the domain name does not have an entry currently
-unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp, bool alias) {
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int numIp, bool alias) {
     unsigned long index = get_hash(domain);
     while (domain_table[index]) index++;     // Linear probing
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");

@@ -49,7 +49,7 @@ void dns_main(int rx_fd, int tx_fd);
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char  *command);
 int process_domain(unsigned short offset, unsigned char  *buffer, unsigned char  *domain, int index);
 unsigned long get_hash(unsigned char *domain);
-unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp, bool alias);
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int numIp, bool alias);
 void clean_table(bool shutdown);
 int get_domain(dns_entry *map, int offset, unsigned char  *buffer, bool authority);
 int process_packet(dns_hdr *hdr, unsigned char  *buffer);
