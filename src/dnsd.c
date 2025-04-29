@@ -315,7 +315,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         write(tx_fd, "DNS: Updated Upstream DNS IPv4 Address\n", 39);
     }
     else if (strcmp(command, "table") == 0) {
-        write(tx_fd, "DNS: Table Entries (Format:  Domain Name  ||  IPv4 Address(es)  ||  TTL  )\n", 75);
+        write(tx_fd, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address] ...  ||  [Expiry Time]  )\n", 75);
 
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
@@ -370,13 +370,12 @@ int process_domain(unsigned short offset, unsigned char *buffer, unsigned char *
             return offset + 2;
         }
         // Not a pointer (Labels are at most 63 octets so must begin with 2 0 bits)
-        int i = 0;
-        while (i < buffer[offset]) {
-            ++i;
-            domain[index++] = buffer[offset + i];
+        int len = buffer[offset];
+        if (len == '\0') break;
+        offset++;
+        for (int i = 0; i < len; i++) {
+            domain[index++] = buffer[offset++];
         }
-        offset += ++i;
-        if (buffer[offset] == '\0') break;
         domain[index++] = '.';
     }
     domain[index] = '\0';
