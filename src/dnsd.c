@@ -612,8 +612,9 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // buffer[offset] should be the first byte of answers
     for (int k = 0; k < hdr.numA; k++) {
         for (int l = 0; l < IP_LENGTH; l++) {
-            map->ip[k][l] = buffer[offset + 12 + (k * ANS_LENGTH) + l];
+            map->ip[k][l] = buffer[offset + 12 + (k * IP_LENGTH) + l];
         }
+        *(unsigned int*)map->ip[k] = ntohl(*(unsigned int*)map->ip[k]); // So host byte order for insertion
     }
     
     // end TODO 
@@ -621,6 +622,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // append_ln_to_log_file_dns("start of insert table...\n");
     index = insert_table(map->domain, map->ip, hdr.numA, false);
     // append_ln_to_log_file_dns("end of insert table...\n");
+
+    for (int k = 0; k < hdr.numA; k++) *(unsigned int*)map->ip[k] = htonl(*(unsigned int*)map->ip[k]); // So network byte order for sending
 
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
     close(sock); // Made sure to close so we can use again
