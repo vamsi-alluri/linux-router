@@ -544,8 +544,10 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     
     // end TODO 
     
-
+    append_ln_to_log_file_dns("start of insert table...\n");
     index = insert_table(map->domain, map->ip, hdr.numA, false);
+    append_ln_to_log_file_dns("end of insert table...\n");
+
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
     return 0;
 }
