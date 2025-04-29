@@ -479,6 +479,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     if (connect(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0)
     {
         append_ln_to_log_file_ntp("cannot connect upstream to %x\n", ntohl(dns_ip));
+        close(sock);
         return time(NULL);
     }
 
@@ -494,6 +495,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     int send_len, recv_len;
     if ((send_len = send(sock, buffer, offset, 0)) < 0) {
         append_ln_to_log_file_dns("sendto-upstream");
+        close(sock);
         return -1;
     }
     append_ln_to_log_file_dns("Sent packet to upstream %s, port number:%d\n",
@@ -504,6 +506,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
 
     if ((recv_len = recv(sock, buffer, BUFFER_SIZE, 0)) < 0) {
         append_ln_to_log_file_dns("recv-upstream (fail or timeout)");
+        close(sock);
         return -1;
     }
 
@@ -535,11 +538,13 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
 
     if (hdr.qr != 1) {
         append_ln_to_log_file_dns("not response upstream");
+        close(sock);
         return -1; 
     }
 
     if (hdr.rcd != 0) {
         append_ln_to_log_file_dns("error upstream"); // Still go through with returning the error dns header to the client
+        close(sock);
         return 0;
     }
 
@@ -559,6 +564,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     append_ln_to_log_file_dns("end of insert table...\n");
 
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
+    close(sock); // Made sure to close so we can use again
     return 0;
 }
 
