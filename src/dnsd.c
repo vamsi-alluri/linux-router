@@ -16,7 +16,7 @@
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/home/osboxes/cs536/router/logs/dns_log.txt"
+#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 int read_from_router_pipe, write_to_router_pipe;
@@ -138,7 +138,7 @@ void dns_main(int rx_fd, int tx_fd){
 
     memset((char *)&ser_addr, 0, sizeof(ser_addr));
     ser_addr.sin_family = AF_INET;
-    ser_addr.sin_port = htons(LOOKUP_PORT);
+    ser_addr.sin_port = htons(DNS_PORT);
     ser_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     // Bind socket to a unsurveiled port by NAT
@@ -400,7 +400,7 @@ void clean_table(bool shutdown) {
     }
 }
 
-int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority) {
+int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthority) {
     unsigned long index = get_hash(map->domain);
     while (domain_table[index]) {
         if ((strlen(domain_table[index]->entry.domain) == strlen(map->domain)) &&
@@ -416,7 +416,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
     append_ln_to_log_file_dns("Not found in table...\n");
 
     // If recursion is not desired
-    if (authority) {
+    // If authority
+    if (!notAuthority) {
         return -2;
     }
     
@@ -447,7 +448,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
 
     memset((char *)&sock_addr, 0, sizeof(sock_addr));
     sock_addr.sin_family = AF_INET;
-    sock_addr.sin_port = htons(DNS_PORT);
+    sock_addr.sin_port = htons(LOOKUP_PORT);
     sock_addr.sin_addr.s_addr = htonl(dns_ip);
 
     if (bind(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
@@ -455,6 +456,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
         close(sock);
         return -1;
     }
+
+    append_ln_to_log_file_dns("...This is DNS server (Upstream Version) listening on port %d...\n\n", LOOKUP_PORT);
 
     // Setup Ends here
 
