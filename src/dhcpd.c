@@ -37,7 +37,7 @@ int raw_socket = -1;  // Raw packet socket
 unsigned char server_mac[6]; // Server MAC address
 uint32_t server_ip = 0;      // Server IP address
 volatile int server_running = 1;
-const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
+const char *log_file_path = "/home/osboxes/cs536/router/logs/dhcp_log.txt"; // Log file path
 
 typedef struct
 {

@@ -529,9 +529,18 @@ void handle_arp_reply(uint8_t *frame, ssize_t len) {
 int is_local_bound_packet(uint32_t dst_ip, uint32_t src_ip) {
     uint32_t src_ip_host = ntohl(src_ip);
     uint32_t dst_ip_host = ntohl(dst_ip);
+
+    // Print src and dst IPs in str
+    char src_ip_str[INET_ADDRSTRLEN];
+    char dst_ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &src_ip_host, src_ip_str, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &dst_ip_host, dst_ip_str, INET_ADDRSTRLEN);
+    append_ln_to_log_file_nat("NAT: src_ip: %s", src_ip_str);
+    append_ln_to_log_file_nat("NAT: dst_ip: %s", dst_ip_str);
+    
     int is_local = (dst_ip_host & MASK) == (src_ip_host & MASK);
-    // append_ln_to_log_file_nat("NAT: dst_ip & 0xFFFFFF00: %d", (dst_ip_host & 0xFFFFFF00));
-    // append_ln_to_log_file_nat("NAT: src_ip & 0xFFFFFF00: %d", (src_ip_host & 0xFFFFFF00));
+    append_ln_to_log_file_nat("NAT: dst_ip & 0xFFFFFF00: %d", (dst_ip_host & 0xFFFFFF00));
+    append_ln_to_log_file_nat("NAT: src_ip & 0xFFFFFF00: %d", (src_ip_host & 0xFFFFFF00));
     return is_local;
 }
 
@@ -539,6 +548,12 @@ int is_local_bound_packet(uint32_t dst_ip, uint32_t src_ip) {
 int is_packet_outgoing(struct ethernet_header *eth_header){
     // wan_machine_mac is loaded at the start of the application.
     return memcmp(eth_header->src_mac, wan_machine_mac, 6) == 0;
+}
+
+// Checks if src MAC address is of the WAN iface.
+int is_packet_inbound(struct ethernet_header *eth_header){
+    // wan_machine_mac is loaded at the start of the application.
+    return memcmp(eth_header->src_mac, lan_machine_mac, 6) == 0;
 }
 
 // Allocates a port incrementally.
@@ -833,15 +848,16 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     struct ipv4_packet *ip_packet = extract_ipv4_packet_from_eth_payload(&eth_frame->payload);
     struct ipv4_header *ip_header = &ip_packet->header;
     
-    if(ip_header->version != 4) return;                   // Anything other than IPv4 SHALL NOT PASS!
+    if(ip_header->version != 4) return;         // Anything other than IPv4 SHALL NOT PASS!
     
     uint16_t translated_dport, translated_sport;
 
     // Is destination IP in the same subnet? Don't process it.
     if (is_local_bound_packet(ip_header->daddr, ip_header->saddr) == 1){
         append_ln_to_log_file_nat("NAT: Packet is local bound, not processing.");
+        append_ln_to_log_file_nat(NULL);
         return;
-    }    
+    }
 
     struct nat_entry *received_packet_details = malloc(sizeof(struct nat_entry));
 
@@ -878,7 +894,13 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
         case TCP_IP_TYPE:
 
             append_ln_to_log_file_nat("NAT: Outbound TCP packet.");
-            const struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
+
+            // append_ln_to_log_file_nat("OUTBOUND BYPASS");
+            // append_ln_to_log_file_nat(NULL);
+            // break;
+
+
+            struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
             
             received_packet_details->orig_port = ntohs(tcp_h->sport);
             translated_dport = ntohs(tcp_h->dport);
@@ -895,9 +917,38 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             
             // Translation:
             ip_header->saddr = translated_nat_entry->trans_ip;
+            tcp_h->sport = htons(translated_nat_entry->trans_port);
+            translated_sport = ntohs(tcp_h->sport);            // Only used for logging.
+            translated_dport = ntohs(tcp_h->dport);            // Only used for logging.
 
-            // Network byte order translation happens in update_tcp_ports.
-            // Manually assign the translation and call the checksum. Don't use the function.
+            // Recompute checksum with new ports and IP
+            tcp_h->check = 0;
+            uint16_t tcp_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
+            if (tcp_check == 0) tcp_check = 0xFFFF;  // Handle zero case
+            tcp_h->check = tcp_check;
+            append_ln_to_log_file_nat("NAT: TCP checksum: 0x%04" PRIx16, tcp_h->check);
+            append_ln_to_log_file_nat("NAT: TCP checksum after any change: 0x%04" PRIx16, tcp_h->check);
+
+            // Check if TCP SYN flag is set
+            // Figure out how to do connection tracking.
+            if (tcp_h->syn) {
+                append_ln_to_log_file_nat("NAT: TCP SYN flag set.");
+                // Handle connection tracking here if needed
+            }
+            else if (tcp_h->ack) {
+                append_ln_to_log_file_nat("NAT: TCP ACK flag set.");
+                // Handle connection tracking here if needed
+            }
+            else if (tcp_h->rst) {
+                append_ln_to_log_file_nat("NAT: TCP RST flag set.");
+                // Handle connection tracking here if needed
+            }
+            else if (tcp_h->fin) {
+                append_ln_to_log_file_nat("NAT: TCP FIN flag set.");
+                // Handle connection tracking here if needed
+            }
+
+
     
             break;
 
@@ -1008,6 +1059,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     if (is_packet_outgoing(eth_header))
     {
         append_ln_to_log_file_nat_verbose("[Verbose] [info] Outbound packet, not processing.");
+        append_ln_to_log_file_nat(NULL);
         return;
     }
 
@@ -1032,6 +1084,8 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     received_packet_details->protocol = ip_header->protocol;
     received_packet_details->trans_ip = ip_header->daddr;                               // The destination address is machine's ip.
 
+    struct nat_entry *enriched_nat_entry;
+
     switch (ip_header->protocol){
         case ICMP_IP_TYPE:
             // NOTE TO SELF: Implemented below by mistake, leaving it here for future use. This was meant to be for outbound.
@@ -1039,6 +1093,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             // Request and reply has their own identifier to be considered as port.
             // For errors, I'm going to use the original packet headers to find the IP and port. I'm assuming these will be for TCP.
             append_ln_to_log_file_nat("ICMP packet, not implemented yet.");
+            append_ln_to_log_file_nat(NULL);
             break;
 
             const struct icmp_header *icmp_h = extract_icmp_header_from_ipv4_packet(ip_packet);
@@ -1058,12 +1113,36 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             }
             break;
         case TCP_IP_TYPE:
-            append_ln_to_log_file_nat("TCP packet, not implemented yet.");
+            append_ln_to_log_file_nat("NAT: Inbound TCP packet.");
+            append_ln_to_log_file_nat("INBOUND BYPASS");
+            append_ln_to_log_file_nat(NULL);
             break;
-
-            const struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
+            struct tcp_header *tcp_h = extract_tcp_header_from_ipv4_packet(ip_packet);
+            uint16_t tcp_len_host = ntohs(ip_header->tot_len) - (ip_header->ihl * 4);
             
-            sport = ntohs(tcp_h->sport);
+            ///
+
+            received_packet_details->trans_port = ntohs(tcp_h->dport);
+            
+            enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
+            if (enriched_nat_entry == NULL) {
+                append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
+                return;
+            }
+
+            ip_header->daddr = enriched_nat_entry->orig_ip;
+            tcp_h->dport = htons(enriched_nat_entry->orig_port);
+
+            size_t tcp_header_len = tcp_h->doff * 4;
+            uint8_t *tcp_payload = ip_packet->payload + tcp_header_len;
+            size_t tcp_payload_len = ntohs(ip_header->tot_len) - (ip_header->ihl * 4) - tcp_header_len;
+
+            // Recompute checksum with new ports and IP
+            tcp_h->check = 0;
+            uint16_t tcp_check = compute_tcp_checksum(ip_header, tcp_h, tcp_payload, tcp_payload_len);
+            if (tcp_check == 0) tcp_check = 0xFFFF;  // Handle zero case
+            tcp_h->check = tcp_check;
+            ///
 
             // Handle TCP connection state.
             break;
@@ -1083,9 +1162,19 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
                 return;
             }
 
+            sport = udp_h->sport;
+            uint16_t sport_host = ntohs(sport);
+
+            // Filters for other services.
+            if (sport_host == 123 || sport_host == 31534 || sport_host == 32432 ){
+                append_ln_to_log_file_nat("Inbound: UDP packet is a DNS or NTP response to router's services. Ignoring.");
+                append_ln_to_log_file_nat(NULL);
+                return;
+            }
+
+
 
             received_packet_details->trans_port = ntohs(udp_h->dport);
-            sport = udp_h->sport;
 
             char dest_ip_str[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &received_packet_details->trans_ip, dest_ip_str, INET_ADDRSTRLEN);
@@ -1093,7 +1182,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
                                     dest_ip_str, received_packet_details->trans_port, received_packet_details->protocol);
 
             // Translation:
-            struct nat_entry *enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
+            enriched_nat_entry = enrich_entry(received_packet_details, INBOUND);
 
             if (enriched_nat_entry == NULL) {
                 append_ln_to_log_file_nat("[Error] Failed to enrich entry.");
