@@ -366,7 +366,7 @@ unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp,
     domain_table[index]->entry.numIp = numIp;
     append_ln_to_log_file_dns("before forloop ip...\n");
 
-    for (int i = 0; i < numIp; ++i) strncpy(domain_table[index]->entry.ip[i], ip[i], IP_LENGTH);
+    for (int i = 0; i < numIp; ++i) memcpy(domain_table[index]->entry.ip[i], ip[i], IP_LENGTH);
     append_ln_to_log_file_dns("after forloop ip...\n");
 
     domain_table[index]->entry.ttl = !alias ? time(NULL) + DEFAULT_TTL : LONG_MAX;
