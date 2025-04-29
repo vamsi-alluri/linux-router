@@ -177,7 +177,7 @@ void dns_main(int rx_fd, int tx_fd){
 
         // For reading & processing commands from router
         if (FD_ISSET(rx_fd, &rfds)) {
-            append_ln_to_log_file_dns("I see something on rx_fd");
+            // append_ln_to_log_file_dns("I see something on rx_fd");
             char buffer[256];
             ssize_t count;
 
@@ -186,7 +186,7 @@ void dns_main(int rx_fd, int tx_fd){
 
             if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
-                append_ln_to_log_file_dns("I read something on rx_fd");
+                // append_ln_to_log_file_dns("I read something on rx_fd");
                 append_ln_to_log_file_dns("count is %d, buffer is %s", count, buffer);
                 // for (int i = 0; i < count; i++)
                 // {
@@ -226,7 +226,7 @@ void dns_main(int rx_fd, int tx_fd){
 
             dns_hdr hdr;
             int offset = process_packet(&hdr, buffer);
-            append_ln_to_log_file_dns("end of process packet...\n");
+            // append_ln_to_log_file_dns("end of process packet...\n");
             
             if (offset < 0) continue;      // There was an error in get_domain so abandon this request
 
@@ -315,7 +315,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         write(tx_fd, "DNS: Updated Upstream DNS IPv4 Address\n", 39);
     }
     else if (strcmp(command, "table") == 0) {
-        // write(tx_fd, "DNS: Table Entries (Format:  Domain Name  ||  IPv4 Address(es)  ||  TTL  )\n", 75);
+        write(tx_fd, "DNS: Table Entries (Format:  Domain Name  ||  IPv4 Address(es)  ||  TTL  )\n", 75);
 
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
@@ -327,6 +327,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             unsigned char domain[MAX_DN_LENGTH];
             memset(domain, 0, MAX_DN_LENGTH);
             process_domain(0, curr->entry.domain, domain, 0);
+
             write(tx_fd, domain, strlen(domain));
             // write(tx_fd, curr->entry.domain, strlen(curr->entry.domain));
             write(tx_fd, "  ||  ", 6);
@@ -403,9 +404,9 @@ unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH],
 
     for (int i = 0; i < numIp; ++i) {
         for (int j = 0; j < IP_LENGTH; ++j) {
-            append_ln_to_log_file_dns("before forloop ip with ip[i][j] %d...\n", ip[i][j]);
+            // append_ln_to_log_file_dns("before forloop ip with ip[i][j] %d...\n", ip[i][j]);
             domain_table[index]->entry.ip[i][j] = ip[i][j];
-            append_ln_to_log_file_dns("after forloop ip iteration %d %d...\n", i, j);
+            // append_ln_to_log_file_dns("after forloop ip iteration %d %d...\n", i, j);
         }
     }
 
@@ -595,9 +596,9 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     
     // end TODO 
     
-    append_ln_to_log_file_dns("start of insert table...\n");
+    // append_ln_to_log_file_dns("start of insert table...\n");
     index = insert_table(map->domain, map->ip, hdr.numA, false);
-    append_ln_to_log_file_dns("end of insert table...\n");
+    // append_ln_to_log_file_dns("end of insert table...\n");
 
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
     close(sock); // Made sure to close so we can use again
@@ -678,7 +679,7 @@ int process_packet(dns_hdr *hdr, unsigned char *buffer) {
     // If there are no errors with the incoming DNS query, we will handle it
     // Otherwise, we will return just the DNS header with Not Implemented RCODE 4
     int offset = !hasError ? process_query(hdr, buffer) : sizeof(dns_hdr);
-    append_ln_to_log_file_dns("end of process query...\n");
+    // append_ln_to_log_file_dns("end of process query...\n");
 
     // If there was an error in process_query from get_domain
     if (offset == -1) {
@@ -748,7 +749,7 @@ int process_query(dns_hdr *hdr, unsigned char *buffer) {
     // Looks up the ith domain stored in map.domain and stores the dns_entry in map
     // Will either retreive from table or retrieve upstream
     int ret = get_domain(&map, offset, buffer, hdr->rd);
-    append_ln_to_log_file_dns("end of get domain...\n");
+    // append_ln_to_log_file_dns("end of get domain...\n");
 
     if (ret < 0) { // If there was an error (-1) or if the domain wasn't found (-2)
         return ret; 
