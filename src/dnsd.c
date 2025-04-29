@@ -326,8 +326,8 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             // Translate DN to printable form
             unsigned char domain[MAX_DN_LENGTH];
             memset(domain, 0, MAX_DN_LENGTH);
-            process_domain(0, curr->entry.domain, domain + 1, 0);
-            append_ln_to_log_file_dns("printed domain: %s...\n", domain);
+            process_domain(0, curr->entry.domain, domain, 0);
+            append_ln_to_log_file_dns("printed domain: %x...\n", curr->entry.domain);
             write(tx_fd, domain, strlen(domain));
             // write(tx_fd, curr->entry.domain, strlen(curr->entry.domain));
             write(tx_fd, "  ||  ", 6);
@@ -372,8 +372,7 @@ int process_domain(unsigned short offset, unsigned char *buffer, unsigned char *
         // Not a pointer (Labels are at most 63 octets so must begin with 2 0 bits)
         int i = 0;
         while (i < buffer[offset]) {
-            domain[index++] = buffer[offset + 1 + i];
-            i++;
+            domain[index++] = buffer[offset + i++];
         }
         offset += ++i;
         if (buffer[offset] == '\0') break;
