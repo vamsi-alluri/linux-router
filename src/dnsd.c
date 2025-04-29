@@ -124,7 +124,7 @@ void dns_main(int rx_fd, int tx_fd){
         return;
     }
 
-    if (flags = fcntl(s, F_GETFL) < 0) {
+    if ((flags = fcntl(s, F_GETFL)) < 0) {
         append_ln_to_log_file_dns("F_GETFL");
         close(s);
         return;
@@ -313,6 +313,41 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         }
         dns_ip = addr.s_addr;
         write(tx_fd, "DNS: Updated Upstream DNS IPv4 Address\n", 39);
+    }
+    else if (strcmp(command, "table") == 0) {
+        write(tx_fd, "Domain Name  ||  IPv4 Address(es)  ||  TTL\n", 43);
+
+        dns_bucket *start = domain_table[0];
+        dns_bucket *prev = start;
+        dns_bucket *curr = prev->next;
+
+        while (start != curr) {
+            // TODO: display info for each entry
+            // Translate DN to printable form
+            unsigned char domain[MAX_DN_LENGTH];
+            memset(domain, 0, MAX_DN_LENGTH);
+            process_domain(0, curr->entry.domain, domain, 0);
+            write(tx_fd, domain, strlen(domain));
+            write(tx_fd, "  ||  ", 6);
+
+            for (int i = 0; i < curr->entry.numIp; i++) {
+                char msg[30];
+                snprintf(msg, sizeof(msg), "'%d'.'%d'.'%d'.'%d'", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
+                write(tx_fd, msg, strlen(msg));
+                if (i + 1 < curr->entry.numIp) write(tx_fd, " & ", 3);
+            }
+            write(tx_fd, "  ||  ", 6);
+       
+            time_t ttl_time = curr->entry.ttl;
+            char buffer[26];
+            strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
+            write(tx_fd, buffer, strlen(buffer));
+            write(tx_fd, "\n", 1);
+
+            // Move on to the next entry
+            prev = curr;
+            curr = prev->next;
+        }
     }
     else {
         write(tx_fd, "DNS: Unknown Command\n", 21);

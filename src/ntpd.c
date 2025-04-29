@@ -121,7 +121,7 @@ void ntp_main(int rx_fd, int tx_fd)
         return;
     }
 
-    if (flags = fcntl(s, F_GETFL) < 0)
+    if ((flags = fcntl(s, F_GETFL)) < 0)
     {
         append_ln_to_log_file_ntp("F_GETFL");
         close(s);
