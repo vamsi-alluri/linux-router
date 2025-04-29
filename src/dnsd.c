@@ -226,6 +226,7 @@ void dns_main(int rx_fd, int tx_fd){
 
             dns_hdr hdr;
             int offset = process_packet(&hdr, buffer);
+            append_ln_to_log_file_dns("end of process packet...\n");
             
             if (offset < 0) continue;      // There was an error in get_domain so abandon this request
 
@@ -623,6 +624,7 @@ int process_packet(dns_hdr *hdr, unsigned char *buffer) {
     // If there are no errors with the incoming DNS query, we will handle it
     // Otherwise, we will return just the DNS header with Not Implemented RCODE 4
     int offset = !hasError ? process_query(hdr, buffer) : sizeof(dns_hdr);
+    append_ln_to_log_file_dns("end of process query...\n");
 
     // If there was an error in process_query from get_domain
     if (offset == -1) {
@@ -692,6 +694,8 @@ int process_query(dns_hdr *hdr, unsigned char *buffer) {
     // Looks up the ith domain stored in map.domain and stores the dns_entry in map
     // Will either retreive from table or retrieve upstream
     int ret = get_domain(&map, offset, buffer, hdr->rd);
+    append_ln_to_log_file_dns("end of get domain...\n");
+
     if (ret < 0) { // If there was an error (-1) or if the domain wasn't found (-2)
         return ret; 
     }
