@@ -400,7 +400,7 @@ void clean_table(bool shutdown) {
     }
 }
 
-int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority) {
+int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthority) {
     unsigned long index = get_hash(map->domain);
     while (domain_table[index]) {
         if ((strlen(domain_table[index]->entry.domain) == strlen(map->domain)) &&
@@ -416,7 +416,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool authority
     append_ln_to_log_file_dns("Not found in table...\n");
 
     // If recursion is not desired
-    if (authority) {
+    if (notAuthority) {
         return -2;
     }
     
