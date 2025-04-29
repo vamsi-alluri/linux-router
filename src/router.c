@@ -281,8 +281,8 @@ void print_running_services(service_t *services)
 
 
 /* ================= Network Configuration ================= */
-// This function configures the LAN interface with a static IP address and netmask.
-void configure_lan_interface(const char *iface_name, const char *ip_addr, const char *netmask) {
+// This function configures the ip address of the given interface with a static IP address and netmask.
+void configure_ip_interface(const char *iface_name, const char *ip_addr, const char *netmask) {
     int fd;
     struct ifreq ifr;
     struct sockaddr_in *addr;
@@ -442,7 +442,7 @@ void handle_cli_input(service_t *services, char * argv[]) {
             char *mask = strtok(NULL, " ");
 
             if (iface && ip && mask) {
-                configure_lan_interface(iface, ip, mask);
+                configure_ip_interface(iface, ip, mask);
             } else {
                 fprintf(stderr, "Usage: config_ip <interface> <ip_address> <netmask>\n");
             }
