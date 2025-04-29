@@ -12,6 +12,9 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 
 // Service headers
 #include "dhcpd.h"
@@ -251,6 +254,7 @@ void print_help(service_t *services)
     fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
     fprintf(stderr, "      <service>:start      - Start the specific service\n");
     fprintf(stderr, "      <service>:shutdown   - Shutdown the specific service\n");
+    fprintf(stderr, "  config_ip <iface> <ip> <netmask> - Configure LAN interface\n");
     fprintf(stderr, "  help                - Show this help\n");
     fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
     fprintf(stderr, "  services            - Print what services are running.\n");
@@ -273,6 +277,76 @@ void print_running_services(service_t *services)
             fprintf(stderr, "  %-5s - %s\n", SERVICE_NAMES[i], is_service_running(&services[i]) ? "running" : "not running");
         }
     }
+}
+
+
+/* ================= Network Configuration ================= */
+// This function configures the LAN interface with a static IP address and netmask.
+void configure_lan_interface(const char *iface_name, const char *ip_addr, const char *netmask) {
+    int fd;
+    struct ifreq ifr;
+    struct sockaddr_in *addr;
+
+    // Create a socket to perform ioctl calls
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // Bring interface up
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) == -1) {
+        perror("SIOCGIFFLAGS");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+    ifr.ifr_flags |= IFF_UP;
+    if (ioctl(fd, SIOCSIFFLAGS, &ifr) == -1) {
+        perror("SIOCSIFFLAGS");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set IP address
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+    addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    addr->sin_family = AF_INET;
+    // Use the provided ip_addr argument
+    if (inet_pton(AF_INET, ip_addr, &addr->sin_addr) <= 0) {
+        fprintf(stderr, "Error: Invalid IP address format '%s'\n", ip_addr);
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ioctl(fd, SIOCSIFADDR, &ifr) == -1) {
+        perror("SIOCSIFADDR");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set netmask
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+    addr = (struct sockaddr_in *)&ifr.ifr_netmask; // Use ifr_netmask here
+    addr->sin_family = AF_INET;
+    // Use the provided netmask argument
+    if (inet_pton(AF_INET, netmask, &addr->sin_addr) <= 0) {
+        fprintf(stderr, "Error: Invalid netmask format '%s'\n", netmask);
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ioctl(fd, SIOCSIFNETMASK, &ifr) == -1) {
+        perror("SIOCSIFNETMASK");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd);
+    fprintf(stderr, "Successfully configured %s with %s/%s\n", iface_name, ip_addr, netmask);
 }
 
 /* ================= Command Handling ================= */
@@ -361,6 +435,18 @@ void handle_cli_input(service_t *services, char * argv[]) {
             fprintf(stderr, "root@router# "); 
             return;
         }
+        else if (strncmp(raw_cmd, "config_ip ", 10) == 0) {
+            char *args = raw_cmd + 10; // point past "config_ip"
+            char *iface = strtok(args, " ");
+            char *ip = strtok(NULL, " ");
+            char *mask = strtok(NULL, " ");
+
+            if (iface && ip && mask) {
+                configure_lan_interface(iface, ip, mask);
+            } else {
+                fprintf(stderr, "Usage: config_ip <interface> <ip_address> <netmask>\n");
+            }
+        }
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
             print_help(services);
@@ -389,6 +475,11 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+
+    // Configure the LAN interface with a static IP address and netmask
+    // Warning!: This is a placeholder. 
+    // You should replace "enp0s8" with your actual interface name.
+    //configure_lan_interface("enp0s8", "192.168.10.1", "255.255.255.0");
 
     // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
