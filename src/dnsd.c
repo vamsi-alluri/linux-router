@@ -539,6 +539,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         return 0;
     }
 
+    if (hdr.numA > MAX_IPS) hdr.numA = MAX_IPS;
+
     // buffer[offset] should be the first byte of answers
     for (int k = 0; k < hdr.numA; k++) {
         for (int l = 0; l < IP_LENGTH; l++) {

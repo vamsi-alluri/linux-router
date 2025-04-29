@@ -6,7 +6,7 @@
 #define MAX_DN_LENGTH 255
 #define IP_LENGTH 4          /* For IPv4 */
 #define ANS_LENGTH 16        /* DNS answer */
-#define MAX_IPS 3            
+#define MAX_IPS 4            
 #define MAX_ENTRIES 256
 #define DEFAULT_TTL 14400    /* 4 hours in seconds */
 #define LOOKUP_IP 0x08080808     // Google DNS IPv4 in Network Byte Order
