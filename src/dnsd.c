@@ -16,7 +16,7 @@
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
+#define DEFAULT_DNS_LOG_PATH "/tmp/dns.log"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 int read_from_router_pipe, write_to_router_pipe;
@@ -110,7 +110,7 @@ void dns_main(int rx_fd, int tx_fd){
     int flags, s, slen = sizeof(cli_addr), recv_len, send_len, select_ret;
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-        append_ln_to_log_file_dns("socket");
+        append_ln_to_log_file_dns("socket Error");
         return;
     }
 
@@ -119,19 +119,19 @@ void dns_main(int rx_fd, int tx_fd){
     strncpy(myreq.ifr_name, "enp0s8", IFNAMSIZ);
     
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0) {
-        append_ln_to_log_file_dns("setsockopt");
+        append_ln_to_log_file_dns("setsockopt Error");
         close(s);
         return;
     }
 
     if (flags = fcntl(s, F_GETFL) < 0) {
-        append_ln_to_log_file_dns("F_GETFL");
+        append_ln_to_log_file_dns("F_GETFL Error");
         close(s);
         return;
     }
     flags |= O_NONBLOCK;
     if (fcntl(s, F_SETFL, flags) < 0) {
-        append_ln_to_log_file_dns("F_SETFL");
+        append_ln_to_log_file_dns("F_SETFL Error");
         close(s);
         return;
     }
@@ -143,7 +143,7 @@ void dns_main(int rx_fd, int tx_fd){
 
     // Bind socket to a unsurveiled port by NAT
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0) {
-        append_ln_to_log_file_dns("bind");
+        append_ln_to_log_file_dns("bind error");
         close(s);
         return;
     }

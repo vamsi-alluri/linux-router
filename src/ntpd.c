@@ -94,10 +94,6 @@ void ntp_main(int rx_fd, int tx_fd)
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process.
 
-    while (true){
-
-    }
-
     memset(&server_hostname, 0, sizeof(server_hostname));
     strncpy(server_hostname, DEFAULT_SERVER, sizeof(DEFAULT_SERVER) - 1);
     server_hostname[sizeof(DEFAULT_SERVER) - 1] = '\0'; // Null-terminate
