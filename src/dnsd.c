@@ -446,18 +446,32 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         return -1;
     }
 
+    // Bind on the local port and local address
+    struct sockaddr_in local_saddr;
+    memset(&local_saddr, 0, sizeof(local_saddr));
+    local_saddr.sin_family = AF_INET;
+    local_saddr.sin_port = htons(LOOKUP_PORT);
+    local_saddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(sock, (struct sockaddr *)&local_saddr, sizeof(local_saddr)) < 0) {
+        append_ln_to_log_file_dns("bind-upstream failed on port %d", LOOKUP_PORT);
+        close(sock);
+        return -1;
+    }
+
+    append_ln_to_log_file_dns("...This is DNS server running Upstream on port %d...\n\n", LOOKUP_PORT);
+
+    // Connects the socket to the server’s IP address and port number
     memset((char *)&sock_addr, 0, sizeof(sock_addr));
     sock_addr.sin_family = AF_INET;
     sock_addr.sin_port = htons(LOOKUP_PORT);
     sock_addr.sin_addr.s_addr = dns_ip; // dns_ip already in network byte order
 
-    if (bind(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0) {
-        append_ln_to_log_file_dns("bind-upstream failed on port %d and on ip %d", LOOKUP_PORT, ntohl(dns_ip));
-        close(sock);
-        return -1;
+    if (connect(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr)) < 0)
+    {
+        append_ln_to_log_file_ntp("cannot connect upstream to %x\n", ntohl(dns_ip));
+        return time(NULL);
     }
-
-    append_ln_to_log_file_dns("...This is DNS server (Upstream Version) listening on port %d...\n\n", LOOKUP_PORT);
 
     // Setup Ends here
 
