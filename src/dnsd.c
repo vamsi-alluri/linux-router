@@ -263,11 +263,11 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         close(tx_fd);
         exit(EXIT_SUCCESS);
     }
-    else if (strncmp(command, "set ", 6) == 0) {
+    else if (strncmp(command, "set ", 4) == 0) {
         // TODO: Check if the domain name is alr in table and bounce back if so
         //
         dns_entry map;
-        char *domain = strtok(command + 6, " ");
+        char *domain = strtok(command + 4, " ");
         char *temp_ip = strtok(NULL, " ");
         if (domain == NULL || temp_ip == NULL) {
             write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
