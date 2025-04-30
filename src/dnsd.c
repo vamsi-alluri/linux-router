@@ -16,7 +16,7 @@
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/tmp/dns.log"
+#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 int read_from_router_pipe, write_to_router_pipe;
@@ -267,8 +267,11 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         // TODO: Check if the domain name is alr in table and bounce back if so
         //
         dns_entry map;
-        char *domain = strtok(command + 4, " ");
-        char *temp_ip = strtok(NULL, " ");
+        char *domain = command + 4;
+        char *temp_ip = strchr(domain, ' ') + 1;
+        *(temp_ip - 1) = '\0'; // Make sure domain is null terminated. temp_ip should be already
+        append_ln_to_log_file_dns("Alias Name: %s", domain);
+        append_ln_to_log_file_dns("Alias IP: %s", temp_ip);
         if (domain == NULL || temp_ip == NULL) {
             write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
             return;
@@ -297,6 +300,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                 return;
             }
         }
+        append_ln_to_log_file_dns("%d.%d.%d.%d", ip[0][0], ip[0][1], ip[0][2], ip[0][3]);
 
         insert_table(domain, ip, 1, true);
         write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42); // Currently will have the same standard ttl
@@ -422,7 +426,7 @@ unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH],
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
     memset(domain_table[index], 0, sizeof(dns_bucket));
     strncpy(domain_table[index]->entry.domain, domain, strlen(domain));
-    domain_table[index]->entry.domain[strlen(domain)] = '\0';
+    domain_table[index]->entry.domain[MAX_DN_LENGTH-1] = '\0';
     domain_table[index]->entry.numIp = numIp;
 
     for (int i = 0; i < numIp; ++i) {
