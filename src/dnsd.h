@@ -50,11 +50,11 @@ typedef struct
 // } dns_entry;
 
 
-typedef struct
-{
-    unsigned char domain[MAX_DN_LENGTH];    /* Queried Domain name (i.e. www.google.com) */
-    unsigned char target[MAX_DN_LENGTH];    /* Targeted Domain name (i.e. www.google.com) */
-} cname_entry;
+// typedef struct
+// {
+//     unsigned char domain[MAX_DN_LENGTH];    /* Queried Domain name (i.e. www.google.com) */
+//     unsigned char target[MAX_DN_LENGTH];    /* Targeted Domain name (i.e. www.google.com) */
+// } cname_entry;
 
 typedef struct
 {

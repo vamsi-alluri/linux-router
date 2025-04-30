@@ -461,7 +461,7 @@ unsigned long get_hash(unsigned char *domain) {
     return hash % MAX_ENTRIES;
 }
 
-unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int ttl, int numIp) {
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], long ttl, int numIp) {
     unsigned long index = get_hash(domain);
     while (domain_table[index]) {
         if (strncmp(domain_table[index]->entry.domain, domain, strlen(domain_table[index]->entry.domain)) == 0) return -1; // Already in table
