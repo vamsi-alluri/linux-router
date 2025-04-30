@@ -40,7 +40,7 @@ uint32_t server_netmask = 0; // Server Netmask
 uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
-const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
+const char *log_file_path = "/home/osboxes/cs536/router/logs/dhcp_log.txt"; // Log file path
 
 typedef struct
 {
