@@ -89,7 +89,7 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
 }
 
 int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], size_t size) {
-        
+
     int temp_sock;  // Temporary socket for IP lookup
     struct ifreq ifr;
 
@@ -329,36 +329,9 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         //
         dns_entry map;
         char *domain = command + 6;
-        char *temp_ip = strchr(domain, ' ') + 1;
-        *(temp_ip - 1) = '\0'; // Make sure domain is null terminated. temp_ip should be already
-        if (domain == NULL || temp_ip == NULL) {
+        if (domain == NULL) {
             write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
             return;
-        }
-        unsigned char ip[MAX_IPS][IP_LENGTH];
-        int index = 0;
-        for (int i = 0; i < IP_LENGTH; i++) {
-            char buf[4];
-            int j = 0;
-            for ( ; j < 4; j++, index++) {
-                if (temp_ip[index] == '.' || temp_ip[index] == '\0') {
-                    buf[j] = '\0';
-                    break;
-                }
-                else {
-                    buf[j] = temp_ip[index];
-                }
-            }
-            index++;
-            if (j == 0 || j == 4) { // If buf is empty or not null terminated by now
-                write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
-                return;
-            }
-            ip[0][i] = atoi(buf);
-            if (ip[0][i] > 255) { // Not valid IPv4 byte
-                write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
-                return;
-            }
         }
         if (remove_table(domain) != -1) {
             write(tx_fd, "DNS: Unassigned Domain Name to IPv4 Address\n", 44);
@@ -487,7 +460,7 @@ unsigned long get_hash(unsigned char *domain) {
 unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int ttl, int numIp) {
     unsigned long index = get_hash(domain);
     while (domain_table[index]) {
-        if (strcmp(domain_table[index]->entry.domain, domain) == 0) return -1; // Already in table
+        if (strncmp(domain_table[index]->entry.domain, domain, strlen(domain_table[index]->entry.domain)) == 0) return -1; // Already in table
         index++;     // Linear probing
     }
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
