@@ -74,7 +74,7 @@ void send_dhcp_raw(int raw_sock,
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
                   dhcp_packet *payload, size_t payload_len,
-                  int tx_fd __attribute__((unused))); // Mark tx_fd as unused
+                  int tx_fd __attribute__((unused))); 
 void append_ln_to_log_file(const char *msg, ...);
 
 // Logging function implementation
@@ -789,10 +789,6 @@ bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))) 
         }
         // If bytes_received == 0, it's unusual, treat as no reply and let timeout handle it.
     } // End while loop
-
-    // If loop finished because break was called (reply_found is true), conflict is true.
-    // If loop finished because timeout expired (select_ret == 0), conflict is false.
-
 cleanup_and_return:
     close(sock_raw_icmp);
     return conflict;
@@ -807,7 +803,6 @@ void mark_ip_conflicted(uint32_t conflicted_ip) {
      pthread_mutex_lock(&lease_mutex);
      for (int i = 0; i < MAX_LEASES; i++) {
          // Find the lease slot corresponding to the IP
-         // This relies on the IP allocation scheme being consistent (htonl(0xC0A80A00 | (i + 100)))
          if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + 100)) == conflicted_ip) {
               leases[i].active = 0; // Mark inactive
               leases[i].conflict_detected_time = now;
@@ -923,8 +918,7 @@ void *handle_dhcp_request(void *arg) {
         uint32_t lease_time = htonl(3600);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-        uint32_t subnet_mask = htonl(0xFFFFFF00);
-        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
         offer.options[offset++] = DHCP_OPTION_END;
@@ -1060,8 +1054,7 @@ void *handle_dhcp_request(void *arg) {
             uint32_t lease_time = htonl(3600);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-            uint32_t subnet_mask = htonl(0xFFFFFF00);
-            offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+            offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
             response_pkt.options[offset++] = DHCP_OPTION_END;
@@ -1155,8 +1148,7 @@ void *handle_dhcp_request(void *arg) {
         dhcp_packet inform_ack;
         int offset = create_dhcp_packet(&inform_ack, DHCPACK, packet.xid, packet.ciaddr, 0, client_mac);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-        uint32_t subnet_mask = htonl(0xFFFFFF00);
-        offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
         inform_ack.options[offset++] = DHCP_OPTION_END;
@@ -1214,6 +1206,15 @@ uint16_t ip_checksum(void *vdata, size_t length)
 }
 
 
+/**
+ * @brief Gets the MAC address, IP address, and netmask of a given network interface.
+ * @param if_name Name of the network interface (e.g., "eth0").
+ * @param mac Pointer to store the MAC address.
+ * @param ip Pointer to store the IP address.
+ * @param netmask Pointer to store the netmask.
+ * @return 0 on success, -1 on error.
+ */
+// * @note This function uses ioctl to retrieve the MAC address, IP address, and netmask of the specified interface.
 int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, uint32_t *netmask) {
     int fd;
     struct ifreq ifr;
@@ -1258,6 +1259,16 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, ui
     return 0;
 }
 
+/** 
+ * @brief Parses a raw DHCP packet from a frame buffer.
+ * @param frame Pointer to the frame buffer containing the DHCP packet.
+ * @param len Length of the frame buffer.
+ * @param packet Pointer to the dhcp_packet structure to fill with parsed data.
+ * @param client_mac Pointer to store the client's MAC address.
+ * @return 1 if successful, 0 if not a valid DHCP packet.
+ */
+// * @note This function checks the Ethernet, IP, and UDP headers, and extracts the DHCP options.
+
 int parse_dhcp_packet(const uint8_t *frame, size_t len,
                       dhcp_packet *packet, unsigned char *client_mac)
 {
@@ -1299,12 +1310,23 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     return 1;
 }
 
+/* @brief Sends a raw DHCP packet over a raw socket.
+ * @param raw_sock The raw socket file descriptor.
+ * @param src_mac Source MAC address.
+ * @param dst_mac Destination MAC address.
+ * @param src_ip Source IP address (in network byte order).
+ * @param dst_ip Destination IP address (in network byte order).
+ * @param payload Pointer to the DHCP packet payload.
+ * @param payload_len Length of the DHCP packet payload.
+ * @param tx_fd The file descriptor for the TX interface (not used in this function).
+ */
+// * @note This function constructs the Ethernet, IP, and UDP headers, calculates checksums, and sends the packet.
 void send_dhcp_raw(int raw_sock, 
                   const unsigned char *src_mac, 
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
                   dhcp_packet *payload, size_t payload_len,
-                  int tx_fd __attribute__((unused))) { // Mark tx_fd as unused
+                  int tx_fd __attribute__((unused))) {
     
     uint8_t buf[MAX_FRAME_LEN];
     memset(buf, 0, sizeof(buf));
