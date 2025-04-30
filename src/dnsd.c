@@ -317,7 +317,8 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
     else if (strcmp(command, "table") == 0) {
         char output[MAX_ENTRIES * 50];  // Big enough for many entries
         int offset = 0;
-        offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address 1] == [IPv4 Address 2] ...  ||  [Expiry Time]  )\n");
+        // offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address 1] == [IPv4 Address 2] ...  ||  [Expiry Time]  )\n");
+        offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries\n");
 
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
