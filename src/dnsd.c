@@ -270,8 +270,6 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         char *domain = command + 4;
         char *temp_ip = strchr(domain, ' ') + 1;
         *(temp_ip - 1) = '\0'; // Make sure domain is null terminated. temp_ip should be already
-        append_ln_to_log_file_dns("Alias Name: %s", domain);
-        append_ln_to_log_file_dns("Alias IP: %s", temp_ip);
         if (domain == NULL || temp_ip == NULL) {
             write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
             return;
@@ -300,9 +298,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                 write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
                 return;
             }
-            append_ln_to_log_file_dns("Interim: %d", ip[0][i]);
         }
-        append_ln_to_log_file_dns("%d.%d.%d.%d", ip[0][0], ip[0][1], ip[0][2], ip[0][3]);
 
         insert_table(domain, ip, 1, true);
         write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42); // Currently will have the same standard ttl
@@ -321,7 +317,6 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         write(tx_fd, "DNS: Updated Upstream DNS IPv4 Address\n", 39);
     }
     else if (strcmp(command, "table") == 0) {
-        append_ln_to_log_file_dns("aa");
         char output[MAX_ENTRIES * 50];  // Big enough for many entries
         int offset = 0;
         // offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address 1] == [IPv4 Address 2] ...  ||  [Expiry Time]  )\n");
@@ -330,7 +325,6 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
         dns_bucket *curr = prev->next;
-append_ln_to_log_file_dns("bb");
         while (start != curr) {
             // TODO: display info for each entry
             offset += snprintf(output + offset, sizeof(output) - offset, "Name: %s\nAddress(es):\n", curr->entry.domain);
@@ -339,17 +333,20 @@ append_ln_to_log_file_dns("bb");
                 offset += snprintf(output + offset, sizeof(output) - offset, "\t%d.%d.%d.%d\n", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
                 // if (i + 1 < curr->entry.numIp) offset += snprintf(output + offset, sizeof(output) - offset, " == ");
             }
-       append_ln_to_log_file_dns("cc");
             time_t ttl_time = curr->entry.ttl;
-            char buffer[26];
-            strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
-            offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: %s\n\n", buffer);
+            if (ttl_time == LONG_MAX) {
+                offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: never (permanent alias)\n\n");
+            }
+            else {
+                char buffer[26];
+                strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
+                offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: %s\n\n", buffer);
+            }
 
             // Move on to the next entry
             prev = curr;
             curr = prev->next;
         }
-append_ln_to_log_file_dns("dd");
         write(tx_fd, output, offset);
 
         // write(tx_fd, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address] ...  ||  [Expiry Time]  )\n", 75);
