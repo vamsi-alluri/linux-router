@@ -6,10 +6,10 @@
 #define MAX_DN_LENGTH 255
 #define IP_LENGTH 4          /* For IPv4 */
 #define ANS_LENGTH 16        /* DNS answer */
-#define MAX_IPS 3            
+#define MAX_IPS 4            
 #define MAX_ENTRIES 256
 #define DEFAULT_TTL 14400    /* 4 hours in seconds */
-#define LOOKUP_IP 0x08080808     // Google DNS IPv4
+#define LOOKUP_IP 0x08080808     // Google DNS IPv4 in Network Byte Order
 
 
 typedef struct
@@ -34,6 +34,27 @@ typedef struct
     unsigned long ttl;                      /* Time that the entry will expire (default is 4 hours after no use) */
 } dns_entry;
 
+// typedef struct
+// {
+//     unsigned char domain[MAX_DN_LENGTH];    /* Domain name (i.e. www.google.com) */
+//     unsigned short type;
+//     union {
+//         struct {
+//             unsigned char ip[MAX_IPS][IP_LENGTH];   /* Array of IP addresses (i.e. 8.8.8.8) */
+//             unsigned short numIp;                   /* Number of IP addresses in ip array */
+//         } a;                                        /* Will be used if is an A record */
+//         unsigned char cname[MAX_DN_LENGTH];         /* Will be used if is an alias to another entry */
+//     } data;
+//     unsigned long ttl;                      /* Time that the entry will expire (default is 4 hours after no use) */
+// } dns_entry;
+
+
+typedef struct
+{
+    unsigned char domain[MAX_DN_LENGTH];    /* Queried Domain name (i.e. www.google.com) */
+    unsigned char target[MAX_DN_LENGTH];    /* Targeted Domain name (i.e. www.google.com) */
+} cname_entry;
+
 typedef struct
 {
     dns_entry entry;                    /* Actual DNS Entry */
@@ -49,7 +70,7 @@ void dns_main(int rx_fd, int tx_fd);
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char  *command);
 int process_domain(unsigned short offset, unsigned char  *buffer, unsigned char  *domain, int index);
 unsigned long get_hash(unsigned char *domain);
-unsigned long insert_table(unsigned char *domain, unsigned char **ip, int numIp, bool alias);
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int numIp, bool alias);
 void clean_table(bool shutdown);
 int get_domain(dns_entry *map, int offset, unsigned char  *buffer, bool authority);
 int process_packet(dns_hdr *hdr, unsigned char  *buffer);
