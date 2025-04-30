@@ -277,12 +277,12 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             return;
         }
         unsigned char ip[MAX_IPS][IP_LENGTH];
+        int index = 0;
         for (int i = 0; i < IP_LENGTH; i++) {
             char buf[4];
-            int index = 0;
             int j = 0;
             for ( ; j < 4; j++, index++) {
-                if (temp_ip[index] == '.') {
+                if (temp_ip[index] == '.' || temp_ip[index] == '\0') {
                     buf[j] = '\0';
                     break;
                 }
@@ -290,6 +290,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                     buf[j] = temp_ip[index];
                 }
             }
+            index++;
             if (j == 0 || j == 4) { // If buf is empty or not null terminated by now
                 write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
                 return;
@@ -299,6 +300,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                 write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
                 return;
             }
+            append_ln_to_log_file_dns("Interim: %d", ip[0][i]);
         }
         append_ln_to_log_file_dns("%d.%d.%d.%d", ip[0][0], ip[0][1], ip[0][2], ip[0][3]);
 
