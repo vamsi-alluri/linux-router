@@ -107,11 +107,7 @@ int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], s
     // Store IP
     struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
     uint32_t ip_buffer = ip_addr->sin_addr.s_addr;
-    gateway_ip[0] = (ip_buffer >> 24) & 0xFF;
-    gateway_ip[1] = (ip_buffer >> 16) & 0xFF;
-    gateway_ip[2] = (ip_buffer >> 8) & 0xFF;
-    gateway_ip[3] = ip_buffer & 0xFF;
-
+    for (int i = 0; i < IP_LENGTH; i++)  gateway_ip[i] = (ip_buffer >> (8*i)) & 0xFF;
     close(temp_sock);
 }
 
@@ -134,11 +130,7 @@ void dns_main(int rx_fd, int tx_fd){
     domain_table[0]->next = domain_table[0];
 
     // Add router as a domain name for router's LAN IP address
-    // get_machine_ip(DEFAULT_LAN_IFACE, lan_machine_ip_str_dns, sizeof(lan_machine_ip_str_dns));
-    lan_machine_ip_str_dns[0] = 192;
-    lan_machine_ip_str_dns[1] = 168;
-    lan_machine_ip_str_dns[2] = 1;
-    lan_machine_ip_str_dns[3] = 1;
+    get_machine_ip_dns(DEFAULT_LAN_IFACE, lan_machine_ip_str_dns, sizeof(lan_machine_ip_str_dns));
     unsigned char ipR[MAX_IPS][IP_LENGTH];
     // TODO: replace with ip constant if saved somewhere
     for (int i = 0; i < IP_LENGTH; i++) ipR[0][i] = lan_machine_ip_str_dns[i];
