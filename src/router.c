@@ -358,7 +358,7 @@ void configure_ip_interface(const char *iface_name, const char *ip_addr, const c
 
 /* ================= Command Handling ================= */
 void handle_service_response(int service_id, int fd) {
-    char buffer[256];
+    char buffer[256 * 50];
     ssize_t count = read(fd, buffer, sizeof(buffer));
     if (count > 0) {
         
