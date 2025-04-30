@@ -624,6 +624,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     unsigned char targetDomain[MAX_DN_LENGTH];
     memcpy(targetDomain, map->domain, MAX_DN_LENGTH);
     for (int k = 0; k < hdr.numA; k++) {
+        append_ln_to_log_file_dns("answer"); // debugging
         // identify the domain name for this entry
         unsigned char tempDomain[MAX_DN_LENGTH];
         memset(tempDomain, '\0', MAX_DN_LENGTH);
@@ -637,6 +638,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         unsigned short typ = *(unsigned short*)(buffer + temp);        
         // map->type = *(unsigned short*)(buffer + temp);
         if (typ == 1) {
+            append_ln_to_log_file_dns("ipAns"); // debugging
             // Then we know this is a A record so...
             temp += 10;
             for (int l = 0; l < IP_LENGTH; l++) {
@@ -647,6 +649,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
             if (numAnsIp == MAX_IPS) break;
         }
         else if (typ == 5) {
+            append_ln_to_log_file_dns("yay we found a cname"); // debugging
+
             // Then we know this is a CNAME so...
             temp += 8;
             int len = *(unsigned short*)(buffer + temp);
