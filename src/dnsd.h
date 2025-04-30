@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <time.h>
 #define MAX_DN_LENGTH 255
 #define IP_LENGTH 4          /* For IPv4 */
 #define ANS_LENGTH 16        /* DNS answer */

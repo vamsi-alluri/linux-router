@@ -9,7 +9,6 @@
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <net/if.h>
-#include <time.h>
 
 #define DNS_PORT 53              // Well-known port
 #define LOOKUP_PORT 31534        // Arbitrary unused port & ignored by NAT
