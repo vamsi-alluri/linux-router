@@ -64,8 +64,6 @@ struct udp_header {
 struct icmp_header {
     uint8_t type;      // ICMP type (e.g., 8 for Echo Request, 0 for Echo Reply)
     uint8_t code;      // ICMP code (subtype)
-    uint16_t checksum; // Checksum (over header and data)
-    uint32_t rest_of_header; // Varies by type/code (e.g., identifier and sequence for Echo)
     // Followed by data (variable length)
 };
 
@@ -77,12 +75,14 @@ struct icmp_echo {
     uint16_t sequence;  
 }; 
 
-struct icmp_error {  
-    // Common header  
-    uint32_t unused;                // Zero-filled  
-    uint8_t  orig_header[60];       // Could be a max of 60 bytes.
-    uint8_t  orig_data[8];          // First 8 bytes of original payload  
-}; 
+struct icmp_error {
+    uint8_t  type;                  // ICMP message type (e.g., 11 for Time Exceeded)
+    uint8_t  code;                  // Error subtype (e.g., 0 for TTL exceeded)
+    uint16_t checksum;              // Checksum for the entire ICMP message
+    uint32_t unused;                // Unused for most error types (could be gateway IP or other info)
+    uint8_t  orig_header[60];       // Original IP header plus first 8 bytes of datagram
+    uint8_t  orig_data[8];          // First 8 bytes of original payload
+};
 
 struct arp_header {
     uint16_t hardware_type;    // Hardware Type (Ethernet = 1)
