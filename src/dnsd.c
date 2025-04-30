@@ -135,7 +135,11 @@ void dns_main(int rx_fd, int tx_fd){
     domain_table[0]->next = domain_table[0];
 
     // Add router as a domain name for router's LAN IP address
-    get_machine_ip(DEFAULT_LAN_IFACE, lan_machine_ip_str_dns, sizeof(lan_machine_ip_str_dns));
+    // get_machine_ip(DEFAULT_LAN_IFACE, lan_machine_ip_str_dns, sizeof(lan_machine_ip_str_dns));
+    lan_machine_ip_str_dns[0] = 192;
+    lan_machine_ip_str_dns[1] = 168;
+    lan_machine_ip_str_dns[2] = 1;
+    lan_machine_ip_str_dns[3] = 1;
     unsigned char ipR[MAX_IPS][IP_LENGTH];
     // TODO: replace with ip constant if saved somewhere
     for (int i = 0; i < IP_LENGTH; i++) ipR[0][i] = lan_machine_ip_str_dns[i];
@@ -288,7 +292,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         char *temp_ip = strchr(domain, ' ') + 1;
         *(temp_ip - 1) = '\0'; // Make sure domain is null terminated. temp_ip should be already
         if (domain == NULL || temp_ip == NULL) {
-            write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
+            write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 56);
             return;
         }
         unsigned char ip[MAX_IPS][IP_LENGTH];
@@ -307,12 +311,12 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             }
             index++;
             if (j == 0 || j == 4) { // If buf is empty or not null terminated by now
-                write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
+                write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 56);
                 return;
             }
             ip[0][i] = atoi(buf);
             if (ip[0][i] > 255) { // Not valid IPv4 byte
-                write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
+                write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 56);
                 return;
             }
         }
@@ -322,7 +326,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42);
         }
         else {
-            write(tx_fd, "DNS: Domain Name Already Assigned to an IPv4 Address\n", 42);
+            write(tx_fd, "DNS: Domain Name Already Assigned to an IPv4 Address\n", 53);
         }
     }
     else if (strncmp(command, "unset ", 6) == 0) {
@@ -330,11 +334,11 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         //
         char *domain = command + 6;
         if (domain == NULL) {
-            write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name])\n", 60);
+            write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name])\n", 43);
             return;
         }
         if (remove_table(domain) != -1) {
-            write(tx_fd, "DNS: Unassigned Domain Name to IPv4 Address(es)\n", 44);
+            write(tx_fd, "DNS: Unassigned Domain Name to IPv4 Address(es)\n", 48);
         }
         else {
             write(tx_fd, "DNS: Domain Name Not in DNS Table\n", 34);
