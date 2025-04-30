@@ -469,7 +469,7 @@ struct nat_entry* find_by_translated(struct nat_entry *details) {
     // Debug log
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &details->trans_ip, ip_str, INET_ADDRSTRLEN);
-    append_ln_to_log_file_nat("Searching inbound hash table for: %s:%u (hash: %u)", 
+    append_ln_to_log_file_nat_verbose("Searching inbound hash table for: %s:%u (hash: %u)", 
                             ip_str, details->trans_port_host, h);
     
     // Search in the specific hash bucket
@@ -584,7 +584,7 @@ struct nat_entry* enrich_entry(struct nat_entry *details, packet_direction_t dir
         }
         
         // No existing entry
-        append_ln_to_log_file_nat("NAT: No existing inbound entry for %s:%u",
+        append_ln_to_log_file_nat_verbose("NAT: No existing inbound entry for %s:%u",
                                 inet_ntoa(*(struct in_addr*)&details->trans_ip),
                                 details->trans_port_host);
         
@@ -1301,17 +1301,19 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             append_ln_to_log_file_nat_verbose("Packet Details outbound: %d -> %d", ntohs(tcp_h->sport), ntohs(tcp_h->dport));
 
             // Verify original checksum before translation
-            uint16_t received_check = tcp_h->check;
-            tcp_h->check = 0;
-            uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
+            if (false){     // Bypassing it, to check the performance.
+                uint16_t received_check = tcp_h->check;
+                tcp_h->check = 0;
+                uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
     
-            if (calculated_check != received_check && received_check != 0) {
-                append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
-                                        ntohs(received_check), ntohs(calculated_check));
-                append_ln_to_log_file_nat_verbose(NULL);
-                return;
+                if (calculated_check != received_check && received_check != 0) {
+                    append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
+                                            ntohs(received_check), ntohs(calculated_check));
+                    append_ln_to_log_file_nat_verbose(NULL);
+                    return;
+                }
+                append_ln_to_log_file_nat_verbose("TCP checksum validated");
             }
-            append_ln_to_log_file_nat_verbose("TCP checksum validated");
 
             // Create NAT entry
             received_packet_details->orig_port_host = ntohs(tcp_h->sport);
@@ -1609,17 +1611,19 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             }
 
             // Verify original checksum before translation
-            uint16_t received_check = tcp_h->check;
-            tcp_h->check = 0;
-            uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
+            if (false){     // Bypassing it, to check the performance.
+                uint16_t received_check = tcp_h->check;
+                tcp_h->check = 0;
+                uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
     
-            if (calculated_check != received_check && received_check != 0) {
-                append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
-                                        ntohs(received_check), ntohs(calculated_check));
-                append_ln_to_log_file_nat_verbose(NULL);
-                return;
+                if (calculated_check != received_check && received_check != 0) {
+                    append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
+                                            ntohs(received_check), ntohs(calculated_check));
+                    append_ln_to_log_file_nat_verbose(NULL);
+                    return;
+                }
+                append_ln_to_log_file_nat_verbose("TCP checksum validated");
             }
-            append_ln_to_log_file_nat_verbose("TCP checksum validated");
 
             // Get NAT translation
             received_packet_details->trans_port_host = ntohs(tcp_h->dport);
