@@ -33,9 +33,9 @@ Implemented in `napt.c`, `napt.h` with helper files `napt_helper.c`, `napt_helpe
 
 Commands to run before running the router:
 
-`sudo iptables -A INPUT -p tcp --tcp-flags RST RST -j DROP`
-
+`sudo iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP`		# rst and fin should be sufficient - have to test it.
 `sudo iptables -A OUTPUT -p tcp --tcp-flags ALL ALL -j DROP`
+`sudo iptables -A OUTPUT -p icmp --icmp-type destination-unreachable -j DROP`
 
 ## Available commands:
 Additions Pending
