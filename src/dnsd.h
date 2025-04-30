@@ -82,7 +82,7 @@ void append_ln_to_log_file_dns(const char *msg, ...);
 void append_ln_to_log_file_dns_verbose(const char *msg, ...);
 static void vappend_ln_to_log_file_dns(const char *msg, va_list args);
 static void clear_log_file_dns();
-int get_machine_ip_dns(const char *iface, char *gateway_ip, size_t size);
+int get_machine_ip_dns(const char *iface, unsigned char *gateway_ip, size_t size);
 unsigned int remove_table(unsigned char *domain);
 
 #endif /* DNSD_H */
