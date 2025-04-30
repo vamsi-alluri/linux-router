@@ -27,7 +27,7 @@ static void clear_log_file_dns() {
     if (log_file) {
         fprintf(log_file, "\n\n");
         fclose(log_file);
-        append_ln_to_log_file_dns("Log file cleared.");
+        append_ln_to_log_file_dns_verbose("Log file cleared.");
     }
 }
 
@@ -79,12 +79,12 @@ void append_ln_to_log_file_dns(const char *msg, ...) {
 }
 
 void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
-    // if (verbose != 1) return;
+    if (verbose_g != 1) return;
 
-    // va_list args;
-    // va_start(args, msg);
-    // vappend_ln_to_log_file_dns(msg, args);
-    // va_end(args);
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file_dns(msg, args);
+    va_end(args);
 }
 
 int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], size_t size) {
@@ -111,20 +111,21 @@ int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], s
     close(temp_sock);
 }
 
-void dns_main(int rx_fd, int tx_fd){
+void dns_main(int rx_fd, int tx_fd, int verbose_p){
 
     read_from_router_pipe = rx_fd;
     write_to_router_pipe = tx_fd;
+    verbose_g = verbose_p;
 
     // Send the PID back to the parent for processing
     pid_t pid = getpid();
     write(write_to_router_pipe, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
     
-    append_ln_to_log_file_dns("DNS service started.");
+    append_ln_to_log_file_dns_verbose("DNS service started.");
     memset(domain_table, 0, MAX_ENTRIES * sizeof(dns_bucket *));   // Clear domain_table
 
     // Add a dummy value to the table at 0 that will be used for iterating through it
-    if ((domain_table[0] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
+    if ((domain_table[0] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns_verbose("malloc");
     memset(domain_table[0], 0, sizeof(dns_bucket));
     domain_table[0]->entry.ttl = LONG_MAX;
     domain_table[0]->next = domain_table[0];
@@ -142,7 +143,7 @@ void dns_main(int rx_fd, int tx_fd){
     int flags, s, slen = sizeof(cli_addr), recv_len, send_len, select_ret;
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-        append_ln_to_log_file_dns("socket Error");
+        append_ln_to_log_file_dns_verbose("socket Error");
         return;
     }
 
@@ -151,19 +152,19 @@ void dns_main(int rx_fd, int tx_fd){
     strncpy(myreq.ifr_name, DEFAULT_LAN_IFACE, IFNAMSIZ);
     
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0) {
-        append_ln_to_log_file_dns("setsockopt Error");
+        append_ln_to_log_file_dns_verbose("setsockopt Error");
         close(s);
         return;
     }
 
     if ((flags = fcntl(s, F_GETFL)) < 0) {
-        append_ln_to_log_file_dns("F_GETFL");
+        append_ln_to_log_file_dns_verbose("F_GETFL");
         close(s);
         return;
     }
     flags |= O_NONBLOCK;
     if (fcntl(s, F_SETFL, flags) < 0) {
-        append_ln_to_log_file_dns("F_SETFL Error");
+        append_ln_to_log_file_dns_verbose("F_SETFL Error");
         close(s);
         return;
     }
@@ -175,13 +176,13 @@ void dns_main(int rx_fd, int tx_fd){
 
     // Bind socket to a unsurveiled port by NAT
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0) {
-        append_ln_to_log_file_dns("bind error");
+        append_ln_to_log_file_dns_verbose("bind error");
         close(s);
         return;
     }
 
     // system("clear");
-    append_ln_to_log_file_dns("...This is DNS server (Non-Blocking Version) listening on port %d...\n\n", DNS_PORT);
+    append_ln_to_log_file_dns_verbose("...This is DNS server (Non-Blocking Version) listening on port %d...\n\n", DNS_PORT);
 
     struct timeval tv = {5, 0}; // 5 seconds, 0 microseconds
     fd_set rfds;
@@ -202,7 +203,7 @@ void dns_main(int rx_fd, int tx_fd){
 
         int ready = select(((s > rx_fd) ? s : rx_fd) + 1, &rfds, NULL, NULL, &tv);
         if (ready < 0) {
-            append_ln_to_log_file_dns("select");
+            append_ln_to_log_file_dns_verbose("select");
             continue;
         }
         // else if (select_ret == 0) continue; // Timeout
@@ -229,11 +230,11 @@ void dns_main(int rx_fd, int tx_fd){
 
             if ((recv_len = recvfrom(s, buffer, BUFFER_SIZE, 0,
                                         (struct sockaddr *)&cli_addr, &slen)) < 0) {
-                append_ln_to_log_file_dns("recvfrom");
+                append_ln_to_log_file_dns_verbose("recvfrom");
                 continue;
             }
 
-            append_ln_to_log_file_dns("Received packet from %s, port number:%d\n",
+            append_ln_to_log_file_dns_verbose("Received packet from %s, port number:%d\n",
                     inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
             dns_hdr hdr;
@@ -243,7 +244,7 @@ void dns_main(int rx_fd, int tx_fd){
 
             if ((send_len = sendto(s, buffer, offset, 0,
                                         (struct sockaddr *)&cli_addr, slen)) < 0) {
-                append_ln_to_log_file_dns("sendto");
+                append_ln_to_log_file_dns_verbose("sendto");
                 continue;
             }
 
@@ -251,12 +252,12 @@ void dns_main(int rx_fd, int tx_fd){
             if (hdr.rcd != 0) {
 
                 // Packet is identical to as it was received but with the Not implemented flag triggered.
-                append_ln_to_log_file_dns("Sent failed packet back to %s, port number:%d\n",
+                append_ln_to_log_file_dns_verbose("Sent failed packet back to %s, port number:%d\n",
                         inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
             }
             // If implemented, sent back an actual response
             else {
-                append_ln_to_log_file_dns("Sent packet back to %s, port number:%d\n",
+                append_ln_to_log_file_dns_verbose("Sent packet back to %s, port number:%d\n",
                         inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
             }
         }
@@ -266,7 +267,7 @@ void dns_main(int rx_fd, int tx_fd){
 }
 
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
-    append_ln_to_log_file_dns("%s", command);
+    append_ln_to_log_file_dns_verbose("%s", command);
     if (strcmp(command, "shutdown") == 0) {
         // Clean shutdown on EOF or explicit command
         clean_table(true);
@@ -463,7 +464,7 @@ unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH],
         if (strncmp(domain_table[index]->entry.domain, domain, strlen(domain_table[index]->entry.domain)) == 0) return -1; // Already in table
         index++;     // Linear probing
     }
-    if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
+    if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns_verbose("malloc");
     memset(domain_table[index], 0, sizeof(dns_bucket));
     strncpy(domain_table[index]->entry.domain, domain, strlen(domain));
     domain_table[index]->entry.domain[MAX_DN_LENGTH-1] = '\0';
@@ -540,7 +541,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         index++;
     }
 
-    append_ln_to_log_file_dns("Not found in table...\n");
+    append_ln_to_log_file_dns_verbose("Not found in table...\n");
 
     // If recursion is not desired
     // If authority
@@ -549,7 +550,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     }
     
     // If we reach this point we need to query upstream for the IP addresses
-    append_ln_to_log_file_dns("Now sending upstream...\n");
+    append_ln_to_log_file_dns_verbose("Now sending upstream...\n");
 
 
     // Here is the socket setup for sending/receiving DNS queries to/from the internet
@@ -558,7 +559,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     struct sockaddr_in sock_addr;
 
     if ((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
-        append_ln_to_log_file_dns("socket-upstream");
+        append_ln_to_log_file_dns_verbose("socket-upstream");
         return -1;
     }
 
@@ -568,7 +569,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     strncpy(myreqInt.ifr_name, DEFAULT_WAN_IFACE, IFNAMSIZ);
     
     if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreqInt, sizeof(myreqInt)) < 0) {
-        append_ln_to_log_file_dns("setsockopt-upstream");
+        append_ln_to_log_file_dns_verbose("setsockopt-upstream");
         close(sock);
         return -1;
     }
@@ -581,12 +582,12 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     local_saddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(sock, (struct sockaddr *)&local_saddr, sizeof(local_saddr)) < 0) {
-        append_ln_to_log_file_dns("bind-upstream failed on port %d", LOOKUP_PORT);
+        append_ln_to_log_file_dns_verbose("bind-upstream failed on port %d", LOOKUP_PORT);
         close(sock);
         return -1;
     }
 
-    append_ln_to_log_file_dns("...This is DNS server running Upstream on port %d...\n\n", LOOKUP_PORT);
+    append_ln_to_log_file_dns_verbose("...This is DNS server running Upstream on port %d...\n\n", LOOKUP_PORT);
 
     // Connects the socket to the server’s IP address and port number
     memset((char *)&sock_addr, 0, sizeof(sock_addr));
@@ -612,23 +613,23 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
 
     int send_len, recv_len;
     if ((send_len = send(sock, buffer, offset, 0)) < 0) {
-        append_ln_to_log_file_dns("sendto-upstream");
+        append_ln_to_log_file_dns_verbose("sendto-upstream");
         close(sock);
         return -1;
     }
-    append_ln_to_log_file_dns("Sent packet to upstream %s, port number:%d\n",
+    append_ln_to_log_file_dns_verbose("Sent packet to upstream %s, port number:%d\n",
             inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
 
     // TODO: in case idk u can uncomment
     // memset(buffer, 0, offset);
 
     if ((recv_len = recv(sock, buffer, BUFFER_SIZE, 0)) < 0) {
-        append_ln_to_log_file_dns("recv-upstream (fail or timeout)");
+        append_ln_to_log_file_dns_verbose("recv-upstream (fail or timeout)");
         close(sock);
         return -1;
     }
 
-    append_ln_to_log_file_dns("Received packet from upstream %s, port number:%d\n",
+    append_ln_to_log_file_dns_verbose("Received packet from upstream %s, port number:%d\n",
             inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
     
     close(sock); // Made sure to close so we can use again
@@ -657,12 +658,12 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     hdr.adRR = ntohs(*(unsigned short*)(buffer + 10));
 
     if (hdr.qr != 1) {
-        append_ln_to_log_file_dns("not response upstream");
+        append_ln_to_log_file_dns_verbose("not response upstream");
         return -1; 
     }
 
     if (hdr.rcd != 0) {
-        append_ln_to_log_file_dns("error upstream");
+        append_ln_to_log_file_dns_verbose("error upstream");
         return -2; // must not be upstream then
     }
 
@@ -689,7 +690,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         memset(tempDomain, '\0', MAX_DN_LENGTH);
         process_domain(temp, buffer, tempDomain, 0); // Will find the domain name that is pointed to by the ptr to domain name
         if (strcmp(targetDomain, tempDomain) != 0) {
-            append_ln_to_log_file_dns("cnames not in a chain not implemented"); // Still go through with returning the error dns header to the client
+            append_ln_to_log_file_dns_verbose("cnames not in a chain not implemented"); // Still go through with returning the error dns header to the client
             return -1;
         }
         // identify the type of answer
@@ -721,7 +722,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         else {
             // Not implemented type so will abandon rest of answers
             temp -= 2;
-            append_ln_to_log_file_dns("non implemented error type"); // Still go through with returning the error dns header to the client
+            append_ln_to_log_file_dns_verbose("non implemented error type"); // Still go through with returning the error dns header to the client
             break;
         }
         // *(unsigned int*)map->ip[k] = ntohl(*(unsigned int*)map->ip[k]); // So host byte order for insertion
@@ -730,7 +731,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // end TODO 
 
     if (map->ttl == 0) {
-        append_ln_to_log_file_dns("No IPs in answer"); // Something is wrong there should be IPs at some point
+        append_ln_to_log_file_dns_verbose("No IPs in answer"); // Something is wrong there should be IPs at some point
         return -1;
     }
     
@@ -765,49 +766,49 @@ int process_packet(dns_hdr *hdr, unsigned char *buffer) {
     bool hasError = false;
     if (hdr->rcd != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("query shouldn't have any errors");
+        append_ln_to_log_file_dns_verbose("query shouldn't have any errors");
         hasError = true; 
     }
 
     if (hdr->op != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("only handle standard queries");
+        append_ln_to_log_file_dns_verbose("only handle standard queries");
         hasError = true; 
     }
 
     if (hdr->z != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("zero flag must be zero");
+        append_ln_to_log_file_dns_verbose("zero flag must be zero");
         hasError = true; 
     }
 
     if (hdr->qr != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("not a query");
+        append_ln_to_log_file_dns_verbose("not a query");
         hasError = true; 
     }
 
     if (hdr->numQ != 1) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("query must have one question");
+        append_ln_to_log_file_dns_verbose("query must have one question");
         hasError = true; 
     }
 
     if (hdr->numA != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("query must have no answer");
+        append_ln_to_log_file_dns_verbose("query must have no answer");
         hasError = true; 
     }
 
     if (hdr->auRR != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("auth RR not allowed"); // Might change one to allow gotta look into
+        append_ln_to_log_file_dns_verbose("auth RR not allowed"); // Might change one to allow gotta look into
         hasError = true; 
     }
 
     if (hdr->adRR != 0) {
         hdr->rcd = 4;
-        append_ln_to_log_file_dns("add RR not allowed"); // Might change one to allow gotta look into
+        append_ln_to_log_file_dns_verbose("add RR not allowed"); // Might change one to allow gotta look into
         hasError = true; 
     }
 
