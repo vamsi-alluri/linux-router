@@ -145,7 +145,7 @@ void dns_main(int rx_fd, int tx_fd){
     for (int i = 0; i < IP_LENGTH; i++) ipR[0][i] = lan_machine_ip_str_dns[i];
     insert_table("router", ipR, LONG_MAX, 1);
 
-    time_t last_cleanup = time(NULL);
+    last_cleanup = time(NULL);
 
     struct sockaddr_in ser_addr, cli_addr;
     int flags, s, slen = sizeof(cli_addr), recv_len, send_len, select_ret;
@@ -283,6 +283,11 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         close(rx_fd); // Close pipes before exit
         close(tx_fd);
         exit(EXIT_SUCCESS);
+    }
+    else if (strcmp(command, "clean") == 0) {
+        clean_table(false);  
+        last_cleanup = time(NULL); 
+        write(tx_fd, "DNS: Cleaned DNS Table.\n", 24); 
     }
     else if (strncmp(command, "set ", 4) == 0) {
         // TODO: Check if the domain name is alr in table and bounce back if so
@@ -461,7 +466,7 @@ unsigned long get_hash(unsigned char *domain) {
     return hash % MAX_ENTRIES;
 }
 
-unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], long ttl, int numIp) {
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], unsigned long ttl, int numIp) {
     unsigned long index = get_hash(domain);
     while (domain_table[index]) {
         if (strncmp(domain_table[index]->entry.domain, domain, strlen(domain_table[index]->entry.domain)) == 0) return -1; // Already in table

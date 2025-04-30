@@ -65,6 +65,7 @@ typedef struct
 static dns_bucket *domain_table[MAX_ENTRIES];   /* Table contains pointers to buckets that contain the actual dns entry */
                                                 /* and a pointer to the next dns entry in the table for navigation. */
 static unsigned char lan_machine_ip_str_dns[IP_LENGTH];
+static time_t last_cleanup;
 
 static int lastIndex = 0;
 static int dns_ip = LOOKUP_IP;          /* IP address for recursive DNS queries. Will be stored in network byte order */
@@ -73,7 +74,7 @@ void dns_main(int rx_fd, int tx_fd);
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char  *command);
 int process_domain(unsigned short offset, unsigned char  *buffer, unsigned char  *domain, int index);
 unsigned long get_hash(unsigned char *domain);
-unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int ttl, int numIp);
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], unsigned long ttl, int numIp);
 void clean_table(bool shutdown);
 int get_domain(dns_entry *map, int offset, unsigned char  *buffer, bool authority);
 int process_packet(dns_hdr *hdr, unsigned char  *buffer);
