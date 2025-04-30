@@ -18,6 +18,8 @@
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
 #define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
+#define DEFAULT_WAN_IFACE "enp0s3"
+#define DEFAULT_LAN_IFACE "enp0s8"
 
 static char *ntp_log_file_path = DEFAULT_NTP_LOG_PATH;
 
@@ -112,7 +114,7 @@ void ntp_main(int rx_fd, int tx_fd)
 
     struct ifreq myreq;
     memset(&myreq, 0, sizeof(myreq));
-    strncpy(myreq.ifr_name, "enp0s8", IFNAMSIZ);
+    strncpy(myreq.ifr_name, DEFAULT_LAN_IFACE, IFNAMSIZ);
 
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0)
     {
