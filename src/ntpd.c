@@ -121,7 +121,7 @@ void ntp_main(int rx_fd, int tx_fd)
         return;
     }
 
-    if (flags = fcntl(s, F_GETFL) < 0)
+    if ((flags = fcntl(s, F_GETFL)) < 0)
     {
         append_ln_to_log_file_ntp("F_GETFL");
         close(s);
@@ -296,6 +296,7 @@ time_t refresh_time()
     // Bind socket to a unsurveiled port by NAT
     if (bind(sock, (struct sockaddr *)&local_saddr, sizeof(local_saddr)) < 0) {
         append_ln_to_log_file_ntp("cannot bind refresh\n");
+        close(sock);
         return time(NULL);
     }
 
@@ -308,14 +309,22 @@ time_t refresh_time()
     if (hostinfo == 0)
     {
         append_ln_to_log_file_ntp("%s is invalid host\n", server_hostname);
+        close(sock);
         return time(NULL);
     }
     saddr.sin_addr.s_addr = *((unsigned int *)(hostinfo->h_addr_list[0]));
     if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
     {
         append_ln_to_log_file_ntp("cannot connect refresh\n");
+        close(sock);
         return time(NULL);
     }
+
+    // Set a receive timeout so recv doesn't stall
+    struct timeval utv;
+    utv.tv_sec = 3;  // 3 seconds
+    utv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&utv, sizeof(utv));
 
     append_ln_to_log_file_ntp("Sending refresh to host %s, port number:%d\n",
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
@@ -324,6 +333,7 @@ time_t refresh_time()
     if (send(sock, &refresh_packet, sizeof(ntp_packet), 0) < 0)
     {
         append_ln_to_log_file_ntp("send refresh\n");
+        close(sock);
         return time(NULL);
     }
 
@@ -331,6 +341,7 @@ time_t refresh_time()
     if (reply_length != sizeof(ntp_packet))
     {
         append_ln_to_log_file_ntp("recv refresh\n");
+        close(sock);
         return time(NULL);
     }
 
@@ -350,8 +361,10 @@ time_t refresh_time()
     if (settimeofday(&tv, NULL) < 0)
     {
         append_ln_to_log_file_ntp("settimeofday\n");
+        close(sock);
         return time(NULL);
     }
+    close(sock); // Made sure to close so we can use again
     return time(NULL);
 }
 
