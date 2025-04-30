@@ -351,7 +351,7 @@ void configure_ip_interface(const char *iface_name, const char *ip_addr, const c
 
 /* ================= Command Handling ================= */
 void handle_service_response(int service_id, int fd) {
-    char buffer[256];
+    char buffer[256 * 50];
     ssize_t count = read(fd, buffer, sizeof(buffer));
     if (count > 0) {
         
@@ -363,7 +363,7 @@ void handle_service_response(int service_id, int fd) {
 }
 
 void handle_cli_input(service_t *services, char * argv[]) {
-    char raw_cmd[256 * 50];
+    char raw_cmd[256];
 
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
 
