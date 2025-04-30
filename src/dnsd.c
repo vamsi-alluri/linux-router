@@ -635,8 +635,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         }
         // identify the type of answer
         temp += 2;
-        unsigned short typ = *(unsigned short*)(buffer + temp);        
-        // map->type = *(unsigned short*)(buffer + temp);
+        unsigned short typ = ntohs(*(unsigned short*)(buffer + temp));        
+        // map->type = ntohs(*(unsigned short*)(buffer + temp));
         if (typ == 1) {
             append_ln_to_log_file_dns("ipAns"); // debugging
             // Then we know this is a A record so...
@@ -653,7 +653,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
 
             // Then we know this is a CNAME so...
             temp += 8;
-            int len = *(unsigned short*)(buffer + temp);
+            int len = ntohs(*(unsigned short*)(buffer + temp));
             temp += 2;
             // Set it as our new target domain
             memset(targetDomain, '\0', MAX_DN_LENGTH);
