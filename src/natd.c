@@ -30,8 +30,7 @@
 #define DEFAULT_LAN_IFACE "enp0s8"      // Configurable by command.
 #define DEFAULT_WAN_IFACE "enp0s3"      // Configurable by command.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_LOG_PATH "/home/osboxes/cs536/router/logs/nat.log" // "/tmp/linux-router/logs/"
-#define NAT_LOG_FILE_NAME "nat.log"
+#define DEFAULT_LOG_PATH "/tmp/linux-router/logs/nat.log"
 
 #define TCP_IP_TYPE 6
 #define UDP_IP_TYPE 17
