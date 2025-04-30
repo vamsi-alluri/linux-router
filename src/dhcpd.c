@@ -157,19 +157,36 @@ void dhcp_main(int rx_fd, int tx_fd) {
         write(tx_fd, buffer, strlen(buffer));
         exit(EXIT_FAILURE);
     }
+    // *** ADD TEMPORARY DEBUG LOG ***
+    append_ln_to_log_file("DHCP DEBUG: server_netmask value after get_interface_info: 0x%08x", server_netmask);
+    // *** END TEMPORARY DEBUG LOG ***
+
     // Calculate network and broadcast addresses based on retrieved info
     network_addr = server_ip & server_netmask;
     broadcast_addr = network_addr | (~server_netmask);
 
+    // Use temporary buffers for inet_ntoa results ***
+    char ip_str[INET_ADDRSTRLEN];
+    char mask_str[INET_ADDRSTRLEN];
+    char net_str[INET_ADDRSTRLEN];
+    char bc_str[INET_ADDRSTRLEN];
+
+    // Convert addresses to strings *before* the log call
+    strncpy(ip_str, inet_ntoa(*(struct in_addr *)&server_ip), INET_ADDRSTRLEN);
+    strncpy(mask_str, inet_ntoa(*(struct in_addr *)&server_netmask), INET_ADDRSTRLEN);
+    strncpy(net_str, inet_ntoa(*(struct in_addr *)&network_addr), INET_ADDRSTRLEN);
+    strncpy(bc_str, inet_ntoa(*(struct in_addr *)&broadcast_addr), INET_ADDRSTRLEN);
+
+    // Now log using the temporary string buffers
     append_ln_to_log_file("DHCP: Interface %s MAC: %02x:%02x:%02x:%02x:%02x:%02x IP: %s Netmask: %s",
                           DHCP_SERVER_INTERFACE, server_mac[0], server_mac[1], server_mac[2],
                           server_mac[3], server_mac[4], server_mac[5],
-                          inet_ntoa(*(struct in_addr *)&server_ip),
-                          inet_ntoa(*(struct in_addr *)&server_netmask));
+                          ip_str, // Use buffer
+                          mask_str); // Use buffer
     // Log the calculated network and broadcast addresses
     append_ln_to_log_file("DHCP: Calculated Network: %s Broadcast: %s",
-                          inet_ntoa(*(struct in_addr *)&network_addr),
-                          inet_ntoa(*(struct in_addr *)&broadcast_addr));
+                          net_str, // Use buffer
+                          bc_str); // Use buffer
 
 
     if ((raw_socket = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP))) == -1) {
@@ -1253,13 +1270,18 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, ui
         close(fd);
         return -1;
     }
-    *netmask = ((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr;
+    // *** ADD DEBUG LOGGING HERE ***
+    struct in_addr raw_mask;
+    raw_mask.s_addr = ((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr;
+    append_ln_to_log_file("DHCP DEBUG: Raw netmask from ioctl for %s: %s", if_name, inet_ntoa(raw_mask));
+    // *** END DEBUG LOGGING ***
 
+    *netmask = ((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr;
     close(fd);
     return 0;
 }
 
-/** // <-- Change this line from // * to /**
+/*
  * @brief Parses a raw DHCP packet from a frame buffer.
  * @param frame Pointer to the frame buffer containing the DHCP packet.
  * @param len Length of the frame buffer.
@@ -1310,7 +1332,7 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     return 1;
 }
 
-// * @brief Sends a raw DHCP packet over a raw socket.
+/* @brief Sends a raw DHCP packet over a raw socket.
  * @param raw_sock The raw socket file descriptor.
  * @param src_mac Source MAC address.
  * @param dst_mac Destination MAC address.
@@ -1387,12 +1409,14 @@ void send_dhcp_raw(int raw_sock,
 
     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(INADDR_BROADCAST));
-    append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s",
+    // Add server_netmask to the log message
+    append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s, Netmask %s",
              tid,
              is_broadcast ? "broadcast" : "unicast",
              sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
              dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
-             inet_ntoa(*(struct in_addr *)&dst_ip));
+             inet_ntoa(*(struct in_addr *)&dst_ip),
+             inet_ntoa(*(struct in_addr *)&server_netmask)); // Log the server's netmask
 
     ssize_t sent = sendto(raw_sock, buf, sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
           0, (struct sockaddr *)&addr, sizeof(addr));
