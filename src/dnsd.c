@@ -263,14 +263,14 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         close(tx_fd);
         exit(EXIT_SUCCESS);
     }
-    else if (strncmp(command, "alias ", 6) == 0) {
+    else if (strncmp(command, "set ", 6) == 0) {
         // TODO: Check if the domain name is alr in table and bounce back if so
         //
         dns_entry map;
         char *domain = strtok(command + 6, " ");
         char *temp_ip = strtok(NULL, " ");
         if (domain == NULL || temp_ip == NULL) {
-            write(tx_fd, "DNS: Incorrect Usage (alias [Domain Name] [IPv4 Address])\n", 58);
+            write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
             return;
         }
         unsigned char ip[MAX_IPS][IP_LENGTH];
@@ -288,18 +288,18 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                 }
             }
             if (j == 0 || j == 4) { // If buf is empty or not null terminated by now
-                write(tx_fd, "DNS: Incorrect Usage (alias [Domain Name] [IPv4 Address])\n", 58);
+                write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
                 return;
             }
             ip[0][i] = atoi(buf);
             if (ip[0][i] > 255) { // Not valid IPv4 byte
-                write(tx_fd, "DNS: Incorrect Usage (alias [Domain Name] [IPv4 Address])\n", 58);
+                write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
                 return;
             }
         }
 
         insert_table(domain, ip, 1, true);
-        write(tx_fd, "DNS: Added Domain Name Alias\n", 29); // Currently will have the same standard ttl
+        write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42); // Currently will have the same standard ttl
     }
     else if (strncmp(command, "upstream ", 9) == 0) {
         // TODO: Set the dns_ip to entered value
@@ -325,17 +325,17 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
 
         while (start != curr) {
             // TODO: display info for each entry
-            offset += snprintf(output + offset, sizeof(output) - offset, "%s  ||  ", curr->entry.domain);
+            offset += snprintf(output + offset, sizeof(output) - offset, "Name: %s\nAddress(es):\n", curr->entry.domain);
 
             for (int i = 0; i < curr->entry.numIp; i++) {
-                offset += snprintf(output + offset, sizeof(output) - offset, "%d.%d.%d.%d", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
+                offset += snprintf(output + offset, sizeof(output) - offset, "\t%d.%d.%d.%d\n", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
                 if (i + 1 < curr->entry.numIp) offset += snprintf(output + offset, sizeof(output) - offset, " == ");
             }
        
             time_t ttl_time = curr->entry.ttl;
             char buffer[26];
             strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
-            offset += snprintf(output + offset, sizeof(output) - offset, "  ||  %s\n", buffer);
+            offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: %s\n\n", buffer);
 
             // Move on to the next entry
             prev = curr;
@@ -572,6 +572,8 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     append_ln_to_log_file_dns("Received packet from upstream %s, port number:%d\n",
             inet_ntoa(sock_addr.sin_addr), ntohs(sock_addr.sin_port));
     
+    close(sock); // Made sure to close so we can use again
+
     // TODO: process packet to get the domain and array of ips
 
     dns_hdr hdr;
@@ -597,22 +599,68 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
 
     if (hdr.qr != 1) {
         append_ln_to_log_file_dns("not response upstream");
-        close(sock);
         return -1; 
     }
 
     if (hdr.rcd != 0) {
-        append_ln_to_log_file_dns("error upstream"); // Still go through with returning the error dns header to the client
-        close(sock);
-        return 0;
+        append_ln_to_log_file_dns("error upstream");
+        return -2; // must not be upstream then
     }
 
-    if (hdr.numA > MAX_IPS) hdr.numA = MAX_IPS;
+    // NOTE: I will return the map as the condensed CNAME chain
+    // i.e. a.com -> b.com -> c.com -> 1.2.3.4 turns into a.com -> 1.2.3.4 for the client.
+    // Trust that chain will be in orser
 
     // buffer[offset] should be the first byte of answers
+    // answers:
+    // first 2 bytes is ptr to domain name
+    // then 2 bytes for type then 2 for class
+    // 4 bytes for time ot live 
+    // 2 bytes data length
+    // 4 bytes for ip address (in order of normal bytes)
+
+    int numAnsIp = 0;
+    int temp = offset;
+    unsigned char targetDomain[MAX_DN_LENGTH];
+    memcpy(targetDomain, map->domain, MAX_DN_LENGTH);
     for (int k = 0; k < hdr.numA; k++) {
-        for (int l = 0; l < IP_LENGTH; l++) {
-            map->ip[k][l] = buffer[offset + 12 + (k * ANS_LENGTH) + l];
+        // identify the domain name for this entry
+        unsigned char tempDomain[MAX_DN_LENGTH];
+        memset(tempDomain, '\0', MAX_DN_LENGTH);
+        process_domain(temp, buffer, tempDomain, 0); // Will find the domain name that is pointed to by the ptr to domain name
+        if (strcmp(targetDomain, tempDomain) != 0) {
+            append_ln_to_log_file_dns("cname order messed up"); // Still go through with returning the error dns header to the client
+            return -1;
+        }
+        // identify the type of answer
+        temp += 2;
+        unsigned short typ = *(unsigned short*)(buffer + temp);        
+        // map->type = *(unsigned short*)(buffer + temp);
+        if (typ == 1) {
+            // Then we know this is a A record so...
+            temp += 10;
+            for (int l = 0; l < IP_LENGTH; l++) {
+                map->ip[numAnsIp][l] = buffer[temp + l];
+            }
+            temp += IP_LENGTH;
+            numAnsIp++;
+            if (numAnsIp == MAX_IPS) break;
+        }
+        else if (typ == 5) {
+            // Then we know this is a CNAME so...
+            temp += 8;
+            int len = *(unsigned short*)(buffer + temp);
+            temp += 2;
+            // Set it as our new target domain
+            memset(targetDomain, '\0', MAX_DN_LENGTH);
+            process_domain(temp, buffer, targetDomain, 0);
+            temp += len;
+        }
+        else {
+            // Not implemented type so will abandon rest of answers
+            temp -= 2;
+            append_ln_to_log_file_dns("non implemented error type"); // Still go through with returning the error dns header to the client
+            break;
         }
         // *(unsigned int*)map->ip[k] = ntohl(*(unsigned int*)map->ip[k]); // So host byte order for insertion
     }
@@ -620,13 +668,12 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // end TODO 
     
     // append_ln_to_log_file_dns("start of insert table...\n");
-    index = insert_table(map->domain, map->ip, hdr.numA, false);
+    index = insert_table(map->domain, map->ip, numAnsIp, false);
     // append_ln_to_log_file_dns("end of insert table...\n");
 
     // for (int k = 0; k < hdr.numA; k++) *(unsigned int*)map->ip[k] = htonl(*(unsigned int*)map->ip[k]); // So network byte order for sending
 
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
-    close(sock); // Made sure to close so we can use again
     return 0;
 }
 

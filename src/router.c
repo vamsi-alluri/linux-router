@@ -363,7 +363,7 @@ void handle_service_response(int service_id, int fd) {
 }
 
 void handle_cli_input(service_t *services, char * argv[]) {
-    char raw_cmd[256];
+    char raw_cmd[256 * 50];
 
     if (!fgets(raw_cmd, sizeof(raw_cmd), stdin)) return;
 
