@@ -570,13 +570,16 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
     }
 
     // 2. No existing lease for this MAC, find the first available slot
-    // An available slot is one that is inactive, expired, OR was conflicted but the delay has passed.
+    // An available slot is one that is inactive AND not recently conflicted,
+    // OR was conflicted but the retry delay has passed.
     for (i = 0; i < MAX_LEASES; i++)
     {
-        bool is_expired = (!leases[i].active || leases[i].lease_end < now);
+        bool recently_conflicted = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) < CONFLICT_RETRY_DELAY);
         bool conflict_ok_to_retry = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) >= CONFLICT_RETRY_DELAY);
+        bool is_inactive = !leases[i].active;
 
-        if (is_expired || conflict_ok_to_retry)
+        // Check if the slot is available according to the new logic
+        if ((is_inactive && !recently_conflicted) || conflict_ok_to_retry)
         {
             // This slot is potentially usable. Record the first one found.
             if (first_available_slot == -1) {
@@ -584,9 +587,9 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
             }
             // If it was conflicted but now okay to retry, clear the conflict time *before* assigning
             if (conflict_ok_to_retry) {
-                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + 100))};
-                 append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (IP %s). Making available again.", i, inet_ntoa(ip_addr));
-                 leases[i].conflict_detected_time = 0;
+                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + 100))}; // Assuming old IP scheme for logging
+                 append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr));
+                 leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
             }
             // Optimization: If we found a truly expired/inactive slot, prefer it over a previously conflicted one.
             // For simplicity now, we just take the first available slot encountered.
@@ -1193,23 +1196,23 @@ void *handle_dhcp_request(void *arg) {
     pthread_exit(NULL);
 }
 
-uint16_t ip_checksum(void *vdata, size_t length) {
-    uint8_t *data = (uint8_t *)vdata;
+uint16_t ip_checksum(void *vdata, size_t length)
+{
+    uint8_t *data = vdata;
     uint32_t sum = 0;
-    size_t i;
-    for (i = 0; i < length; i += 2) {
-        uint16_t val = 0;
-        if (i + 1 < length) {
-            val = (data[i] << 8) + data[i + 1];
-        } else {
-            val = data[i];
-        }
-        sum += val;
-    }
-    sum = (sum >> 16) + (sum & 0xFFFF);
-    sum += (sum >> 16);
-    return ~sum;
+
+    for (size_t i = 0; i + 1 < length; i += 2)
+        sum += ((uint16_t)data[i] << 8) | data[i + 1];
+
+    if (length & 1)                         // odd byte at the end
+        sum += (uint16_t)data[length - 1] << 8;
+
+    /* fold carries */
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)~sum;
 }
+
 
 int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, uint32_t *netmask) {
     int fd;
