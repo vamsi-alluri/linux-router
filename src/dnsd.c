@@ -104,6 +104,15 @@ void dns_main(int rx_fd, int tx_fd){
     domain_table[0]->entry.ttl = LONG_MAX;
     domain_table[0]->next = domain_table[0];
 
+    // Add router as a domain name for router's enp0s8 IP address
+    unsigned char ipR[MAX_IPS][IP_LENGTH];
+    // TODO: replace with ip constant if saved somewhere
+    ipR[0][0] = 192;
+    ipR[0][1] = 168;
+    ipR[0][2] = 1;
+    ipR[0][3] = 1;
+    insert_table("router", ipR, 1, true);
+
     time_t last_cleanup = time(NULL);
 
     struct sockaddr_in ser_addr, cli_addr;
