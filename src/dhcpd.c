@@ -74,7 +74,7 @@ void send_dhcp_raw(int raw_sock,
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
                   dhcp_packet *payload, size_t payload_len,
-                  int tx_fd __attribute__((unused))); // Mark tx_fd as unused
+                  int tx_fd __attribute__((unused))); 
 void append_ln_to_log_file(const char *msg, ...);
 
 // Logging function implementation
@@ -1206,6 +1206,15 @@ uint16_t ip_checksum(void *vdata, size_t length)
 }
 
 
+/**
+ * @brief Gets the MAC address, IP address, and netmask of a given network interface.
+ * @param if_name Name of the network interface (e.g., "eth0").
+ * @param mac Pointer to store the MAC address.
+ * @param ip Pointer to store the IP address.
+ * @param netmask Pointer to store the netmask.
+ * @return 0 on success, -1 on error.
+ */
+// * @note This function uses ioctl to retrieve the MAC address, IP address, and netmask of the specified interface.
 int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, uint32_t *netmask) {
     int fd;
     struct ifreq ifr;
@@ -1250,6 +1259,16 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, ui
     return 0;
 }
 
+/** // <-- Change this line from // * to /**
+ * @brief Parses a raw DHCP packet from a frame buffer.
+ * @param frame Pointer to the frame buffer containing the DHCP packet.
+ * @param len Length of the frame buffer.
+ * @param packet Pointer to the dhcp_packet structure to fill with parsed data.
+ * @param client_mac Pointer to store the client's MAC address.
+ * @return 1 if successful, 0 if not a valid DHCP packet.
+ */
+// * @note This function checks the Ethernet, IP, and UDP headers, and extracts the DHCP options.
+
 int parse_dhcp_packet(const uint8_t *frame, size_t len,
                       dhcp_packet *packet, unsigned char *client_mac)
 {
@@ -1291,6 +1310,17 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     return 1;
 }
 
+// * @brief Sends a raw DHCP packet over a raw socket.
+ * @param raw_sock The raw socket file descriptor.
+ * @param src_mac Source MAC address.
+ * @param dst_mac Destination MAC address.
+ * @param src_ip Source IP address (in network byte order).
+ * @param dst_ip Destination IP address (in network byte order).
+ * @param payload Pointer to the DHCP packet payload.
+ * @param payload_len Length of the DHCP packet payload.
+ * @param tx_fd The file descriptor for the TX interface (not used in this function).
+ */
+// * @note This function constructs the Ethernet, IP, and UDP headers, calculates checksums, and sends the packet.
 void send_dhcp_raw(int raw_sock, 
                   const unsigned char *src_mac, 
                   const unsigned char *dst_mac,
