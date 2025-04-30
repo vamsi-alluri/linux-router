@@ -17,6 +17,8 @@
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
 #define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
+#define DEFAULT_WAN_IFACE "enp0s3"
+#define DEFAULT_LAN_IFACE "enp0s8"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 int read_from_router_pipe, write_to_router_pipe;
@@ -86,6 +88,34 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
     // va_end(args);
 }
 
+int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], size_t size) {
+        
+    int temp_sock;  // Temporary socket for IP lookup
+    struct ifreq ifr;
+
+    // Get IP address using a temporary socket
+    if((temp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        append_ln_to_log_file_nat("Temp socket creation failed on iface %s.", iface);
+        exit(EXIT_FAILURE);
+    }
+
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ);
+    if(ioctl(temp_sock, SIOCGIFADDR, &ifr) < 0) {
+        append_ln_to_log_file_nat("IP address retrieval failed on iface %s. Continuing without it.", iface);
+        close(temp_sock);
+    }
+    
+    // Store IP
+    struct sockaddr_in *ip_addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    uint32_t ip_buffer = ip_addr->sin_addr.s_addr;
+    gateway_ip[0] = (ip_buffer >> 24) & 0xFF;
+    gateway_ip[1] = (ip_buffer >> 16) & 0xFF;
+    gateway_ip[2] = (ip_buffer >> 8) & 0xFF;
+    gateway_ip[3] = ip_buffer & 0xFF;
+
+    close(temp_sock);
+}
+
 void dns_main(int rx_fd, int tx_fd){
 
     read_from_router_pipe = rx_fd;
@@ -104,13 +134,11 @@ void dns_main(int rx_fd, int tx_fd){
     domain_table[0]->entry.ttl = LONG_MAX;
     domain_table[0]->next = domain_table[0];
 
-    // Add router as a domain name for router's enp0s8 IP address
+    // Add router as a domain name for router's LAN IP address
+    get_machine_ip(DEFAULT_LAN_IFACE, lan_machine_ip_str_dns, sizeof(lan_machine_ip_str_dns));
     unsigned char ipR[MAX_IPS][IP_LENGTH];
     // TODO: replace with ip constant if saved somewhere
-    ipR[0][0] = 192;
-    ipR[0][1] = 168;
-    ipR[0][2] = 1;
-    ipR[0][3] = 1;
+    for (int i = 0; i < IP_LENGTH; i++) ipR[0][i] = lan_machine_ip_str_dns[i];
     insert_table("router", ipR, LONG_MAX, 1);
 
     time_t last_cleanup = time(NULL);
@@ -125,7 +153,7 @@ void dns_main(int rx_fd, int tx_fd){
 
     struct ifreq myreq;
     memset(&myreq, 0, sizeof(myreq));
-    strncpy(myreq.ifr_name, "enp0s8", IFNAMSIZ);
+    strncpy(myreq.ifr_name, DEFAULT_LAN_IFACE, IFNAMSIZ);
     
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0) {
         append_ln_to_log_file_dns("setsockopt Error");
@@ -288,8 +316,56 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             }
         }
 
-        insert_table(domain, ip, LONG_MAX, 1);
-        write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42); // Currently will have the same standard ttl
+
+        if (insert_table(domain, ip, LONG_MAX, 1) != -1) {
+            write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42);
+        }
+        else {
+            write(tx_fd, "DNS: Domain Name Already Assigned to an IPv4 Address\n", 42);
+        }
+    }
+    else if (strncmp(command, "unset ", 6) == 0) {
+        // TODO: Check if the domain name is alr in table and bounce back if so
+        //
+        dns_entry map;
+        char *domain = command + 6;
+        char *temp_ip = strchr(domain, ' ') + 1;
+        *(temp_ip - 1) = '\0'; // Make sure domain is null terminated. temp_ip should be already
+        if (domain == NULL || temp_ip == NULL) {
+            write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
+            return;
+        }
+        unsigned char ip[MAX_IPS][IP_LENGTH];
+        int index = 0;
+        for (int i = 0; i < IP_LENGTH; i++) {
+            char buf[4];
+            int j = 0;
+            for ( ; j < 4; j++, index++) {
+                if (temp_ip[index] == '.' || temp_ip[index] == '\0') {
+                    buf[j] = '\0';
+                    break;
+                }
+                else {
+                    buf[j] = temp_ip[index];
+                }
+            }
+            index++;
+            if (j == 0 || j == 4) { // If buf is empty or not null terminated by now
+                write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
+                return;
+            }
+            ip[0][i] = atoi(buf);
+            if (ip[0][i] > 255) { // Not valid IPv4 byte
+                write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
+                return;
+            }
+        }
+        if (remove_table(domain) != -1) {
+            write(tx_fd, "DNS: Unassigned Domain Name to IPv4 Address\n", 44);
+        }
+        else {
+            write(tx_fd, "DNS: Domain Name Not in DNS Table\n", 34);
+        }
     }
     else if (strncmp(command, "upstream ", 9) == 0) {
         // TODO: Set the dns_ip to entered value
@@ -408,10 +484,12 @@ unsigned long get_hash(unsigned char *domain) {
     return hash % MAX_ENTRIES;
 }
 
-// This must ONLY be used if the domain name does not have an entry currently
 unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int ttl, int numIp) {
     unsigned long index = get_hash(domain);
-    while (domain_table[index]) index++;     // Linear probing
+    while (domain_table[index]) {
+        if (strcmp(domain_table[index]->entry.domain, domain) == 0) return -1; // Already in table
+        index++;     // Linear probing
+    }
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
     memset(domain_table[index], 0, sizeof(dns_bucket));
     strncpy(domain_table[index]->entry.domain, domain, strlen(domain));
@@ -428,6 +506,22 @@ unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH],
     domain_table[index]->next = domain_table[0]->next;
     domain_table[0]->next = domain_table[index];
     return index;
+}
+
+unsigned int remove_table(unsigned char *domain) {
+    dns_bucket *start = domain_table[0];
+    dns_bucket *prev = start;
+    dns_bucket *curr = prev->next;
+
+    while (start != curr) {
+        if (strcmp(curr->entry.domain, domain) == 0) { // Is actually in table
+            prev->next = curr->next;
+            free(curr);
+            return 0;
+        }
+        curr = prev->next;
+    }
+    return -1; // Never found in table
 }
 
 // DNS table cleanup
@@ -498,7 +592,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     // Might not need because it might be default, but will leave for now to be safe
     struct ifreq myreqInt;
     memset(&myreqInt, 0, sizeof(myreqInt));
-    strncpy(myreqInt.ifr_name, "enp0s3", IFNAMSIZ);
+    strncpy(myreqInt.ifr_name, DEFAULT_WAN_IFACE, IFNAMSIZ);
     
     if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreqInt, sizeof(myreqInt)) < 0) {
         append_ln_to_log_file_dns("setsockopt-upstream");
