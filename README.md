@@ -86,4 +86,4 @@ If you are planning to add a router specific command that is not in relation to 
 ## NTP:
 In order for the NTP time syncronization to be done exclusively by the NTP server, you must run this code to disable the `systemd-timesyncd` process that will automatically do NTP syncronization as a built in part of Debian OS: `sudo systemctl stop systemd-timesyncd`, `sudo systemctl disable systemd-timesyncd`, `sudo systemctl mask systemd-timesyncd`. You can check if it is running before and after with `sudo systemctl status systemd-timesyncd`.
 
-Also in the client, run `sudo vim /etc/systemd/timesyncd.conf`, add the line `NTP=router.local` so that only the router's NTP server is contacted, and `sudo systemctl restart systemd-timesyncd` to restart the clients built in NTP.
+Also in the client, run `sudo vim /etc/systemd/timesyncd.conf`, add the line `NTP=router` so that only the router's NTP server is contacted, and `sudo systemctl restart systemd-timesyncd` to restart the clients built in NTP.
