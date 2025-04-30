@@ -8,7 +8,7 @@
 #define ANS_LENGTH 16        /* DNS answer */
 #define MAX_IPS 4            
 #define MAX_ENTRIES 256
-#define DEFAULT_TTL 14400    /* 4 hours in seconds */
+#define DEFAULT_SEND_TTL 300    /* 5 minutes in seconds */
 #define LOOKUP_IP 0x08080808     // Google DNS IPv4 in Network Byte Order
 
 
@@ -70,7 +70,7 @@ void dns_main(int rx_fd, int tx_fd);
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char  *command);
 int process_domain(unsigned short offset, unsigned char  *buffer, unsigned char  *domain, int index);
 unsigned long get_hash(unsigned char *domain);
-unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int numIp, bool alias);
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int ttl, int numIp, bool alias);
 void clean_table(bool shutdown);
 int get_domain(dns_entry *map, int offset, unsigned char  *buffer, bool authority);
 int process_packet(dns_hdr *hdr, unsigned char  *buffer);

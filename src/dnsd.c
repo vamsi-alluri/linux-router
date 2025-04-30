@@ -111,7 +111,7 @@ void dns_main(int rx_fd, int tx_fd){
     ipR[0][1] = 168;
     ipR[0][2] = 1;
     ipR[0][3] = 1;
-    insert_table("router", ipR, 1, true);
+    insert_table("router", ipR, LONG_MAX, 1);
 
     time_t last_cleanup = time(NULL);
 
@@ -288,7 +288,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             }
         }
 
-        insert_table(domain, ip, 1, true);
+        insert_table(domain, ip, LONG_MAX, 1);
         write(tx_fd, "DNS: Assigned Domain Name to IPv4 Address\n", 42); // Currently will have the same standard ttl
     }
     else if (strncmp(command, "upstream ", 9) == 0) {
@@ -409,7 +409,7 @@ unsigned long get_hash(unsigned char *domain) {
 }
 
 // This must ONLY be used if the domain name does not have an entry currently
-unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int numIp, bool alias) {
+unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH], int ttl, int numIp) {
     unsigned long index = get_hash(domain);
     while (domain_table[index]) index++;     // Linear probing
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
@@ -424,7 +424,7 @@ unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH],
         }
     }
 
-    domain_table[index]->entry.ttl = !alias ? time(NULL) + DEFAULT_TTL : LONG_MAX;
+    domain_table[index]->entry.ttl = ttl;
     domain_table[index]->next = domain_table[0]->next;
     domain_table[0]->next = domain_table[index];
     return index;
@@ -615,6 +615,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     int temp = offset;
     unsigned char targetDomain[MAX_DN_LENGTH];
     memcpy(targetDomain, map->domain, MAX_DN_LENGTH);
+    map->ttl = 0;
     for (int k = 0; k < hdr.numA; k++) {
         // identify the domain name for this entry
         unsigned char tempDomain[MAX_DN_LENGTH];
@@ -630,7 +631,9 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         // map->type = ntohs(*(unsigned short*)(buffer + temp));
         if (typ == 1) {
             // Then we know this is a A record so...
-            temp += 10;
+            temp += 4;
+            map->ttl = ntohl(*(unsigned int*)(buffer + temp));
+            temp += 6;
             for (int l = 0; l < IP_LENGTH; l++) {
                 map->ip[numAnsIp][l] = buffer[temp + l];
             }
@@ -658,8 +661,13 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     }
     
     // end TODO 
+
+    if (map->ttl == 0) {
+        append_ln_to_log_file_dns("No IPs in answer"); // Something is wrong there should be IPs at some point
+        return -1;
+    }
     
-    index = insert_table(map->domain, map->ip, numAnsIp, false);
+    index = insert_table(map->domain, map->ip, time(NULL) + map->ttl, numAnsIp);
 
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
     return 0;
@@ -830,7 +838,7 @@ int process_query(dns_hdr *hdr, unsigned char *buffer) {
         *(unsigned short*)(buffer + offset + (j * ANS_LENGTH)) = htons(domain_ptr);
         *(unsigned short*)(buffer + offset + (j * ANS_LENGTH) + 2) = htons(type);
         *(unsigned short*)(buffer + offset + (j * ANS_LENGTH) + 4) = htons(class);
-        *(unsigned int*)(buffer + offset + (j * ANS_LENGTH) + 6) = htonl((unsigned int)(map.ttl - time(NULL))); // Trusting this doesnt become negative since the 
+        *(unsigned int*)(buffer + offset + (j * ANS_LENGTH) + 6) = htonl((unsigned int)(DEFAULT_SEND_TTL)); // Just give a default TTL for each so that it will refresh names like router if changed between router startups
         *(unsigned short*)(buffer + offset + (j * ANS_LENGTH) + 10) = htons(IP_LENGTH);
         for (int k = 0; k < IP_LENGTH; k++) {
             (buffer + offset + (j * ANS_LENGTH))[12 + k] = map.ip[j][k];
