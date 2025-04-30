@@ -327,14 +327,13 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
     else if (strncmp(command, "unset ", 6) == 0) {
         // TODO: Check if the domain name is alr in table and bounce back if so
         //
-        dns_entry map;
         char *domain = command + 6;
         if (domain == NULL) {
-            write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name] [IPv4 Address])\n", 60);
+            write(tx_fd, "DNS: Incorrect Usage (unset [Domain Name])\n", 60);
             return;
         }
         if (remove_table(domain) != -1) {
-            write(tx_fd, "DNS: Unassigned Domain Name to IPv4 Address\n", 44);
+            write(tx_fd, "DNS: Unassigned Domain Name to IPv4 Address(es)\n", 44);
         }
         else {
             write(tx_fd, "DNS: Domain Name Not in DNS Table\n", 34);
