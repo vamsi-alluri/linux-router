@@ -923,8 +923,7 @@ void *handle_dhcp_request(void *arg) {
         uint32_t lease_time = htonl(3600);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-        uint32_t subnet_mask = htonl(0xFFFFFF00);
-        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
         offer.options[offset++] = DHCP_OPTION_END;
@@ -1060,8 +1059,7 @@ void *handle_dhcp_request(void *arg) {
             uint32_t lease_time = htonl(3600);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-            uint32_t subnet_mask = htonl(0xFFFFFF00);
-            offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+            offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
             response_pkt.options[offset++] = DHCP_OPTION_END;
@@ -1155,8 +1153,7 @@ void *handle_dhcp_request(void *arg) {
         dhcp_packet inform_ack;
         int offset = create_dhcp_packet(&inform_ack, DHCPACK, packet.xid, packet.ciaddr, 0, client_mac);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-        uint32_t subnet_mask = htonl(0xFFFFFF00);
-        offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
         inform_ack.options[offset++] = DHCP_OPTION_END;
