@@ -121,7 +121,7 @@ void reassemble_ethernet(const struct raw_ethernet_frame frame, const struct eth
 
 void update_ip_checksum(struct ipv4_header* ip);
 uint16_t compute_checksum(const void* data, size_t len);
-uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len);
+uint16_t compute_tcp_checksum(struct ipv4_header* ip, uint8_t tcp_header_len, struct tcp_header* tcp, const uint8_t* payload, uint16_t payload_len);
 uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len);
 // End of Reassembly
 

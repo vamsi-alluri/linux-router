@@ -101,7 +101,7 @@ void update_ip_checksum(struct ipv4_header* ip) {
     ip->check = compute_checksum(ip, ip->ihl * 4); // Only header, no payload
 }
 
-uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, const uint8_t* payload, size_t payload_len) {
+uint16_t compute_tcp_checksum(struct ipv4_header* ip, uint8_t tcp_header_len, struct tcp_header* tcp, const uint8_t* payload, uint16_t payload_len) {
     
     #pragma pack(push, 1) 
     struct {
@@ -121,14 +121,13 @@ uint16_t compute_tcp_checksum(struct ipv4_header* ip, struct tcp_header* tcp, co
     pseudo_header.protocol = IPPROTO_TCP;
     pseudo_header.tcp_len = htons(ntohs(ip->tot_len) - (ip->ihl * 4)); // TCP segment length
     
-    uint8_t doff = TCP_DOFF(ntohs(tcp->data_offset_reserved_flags));
     // Create contiguous buffer
-    size_t total_len = sizeof(pseudo_header) + (doff * 4) + payload_len;
+    size_t total_len = sizeof(pseudo_header) + tcp_header_len + payload_len;
     uint8_t *buf = malloc(total_len);
 
     memcpy(buf, &pseudo_header, sizeof(pseudo_header));
-    memcpy(buf + sizeof(pseudo_header), tcp, doff * 4); // Include TCP options
-    memcpy(buf + sizeof(pseudo_header) + (doff * 4), payload, payload_len);
+    memcpy(buf + sizeof(pseudo_header), tcp, tcp_header_len); // Include TCP options
+    memcpy(buf + sizeof(pseudo_header) + tcp_header_len, payload, payload_len);
 
     // Compute checksum
     uint16_t checksum = compute_checksum(buf, total_len);
