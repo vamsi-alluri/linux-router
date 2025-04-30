@@ -1259,7 +1259,7 @@ int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, ui
     return 0;
 }
 
-/** // <-- Change this line from // * to /**
+/** 
  * @brief Parses a raw DHCP packet from a frame buffer.
  * @param frame Pointer to the frame buffer containing the DHCP packet.
  * @param len Length of the frame buffer.
@@ -1310,7 +1310,7 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     return 1;
 }
 
-// * @brief Sends a raw DHCP packet over a raw socket.
+/* @brief Sends a raw DHCP packet over a raw socket.
  * @param raw_sock The raw socket file descriptor.
  * @param src_mac Source MAC address.
  * @param dst_mac Destination MAC address.
