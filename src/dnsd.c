@@ -321,6 +321,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         write(tx_fd, "DNS: Updated Upstream DNS IPv4 Address\n", 39);
     }
     else if (strcmp(command, "table") == 0) {
+        append_ln_to_log_file_dns("aa");
         char output[MAX_ENTRIES * 50];  // Big enough for many entries
         int offset = 0;
         // offset += snprintf(output + offset, sizeof(output) - offset, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address 1] == [IPv4 Address 2] ...  ||  [Expiry Time]  )\n");
@@ -329,7 +330,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
         dns_bucket *curr = prev->next;
-
+append_ln_to_log_file_dns("bb");
         while (start != curr) {
             // TODO: display info for each entry
             offset += snprintf(output + offset, sizeof(output) - offset, "Name: %s\nAddress(es):\n", curr->entry.domain);
@@ -338,7 +339,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                 offset += snprintf(output + offset, sizeof(output) - offset, "\t%d.%d.%d.%d\n", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
                 // if (i + 1 < curr->entry.numIp) offset += snprintf(output + offset, sizeof(output) - offset, " == ");
             }
-       
+       append_ln_to_log_file_dns("cc");
             time_t ttl_time = curr->entry.ttl;
             char buffer[26];
             strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
@@ -348,6 +349,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
             prev = curr;
             curr = prev->next;
         }
+append_ln_to_log_file_dns("dd");
         write(tx_fd, output, offset);
 
         // write(tx_fd, "DNS: Table Entries (  [Domain Name]  ||  [IPv4 Address] ...  ||  [Expiry Time]  )\n", 75);
