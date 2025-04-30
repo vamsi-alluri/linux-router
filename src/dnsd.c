@@ -16,7 +16,7 @@
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/tmp/dns.log"
+#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
 
 static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
 int read_from_router_pipe, write_to_router_pipe;
@@ -104,6 +104,15 @@ void dns_main(int rx_fd, int tx_fd){
     domain_table[0]->entry.ttl = LONG_MAX;
     domain_table[0]->next = domain_table[0];
 
+    // Add router as a domain name for router's enp0s8 IP address
+    unsigned char ipR[MAX_IPS][IP_LENGTH];
+    // TODO: replace with ip constant if saved somewhere
+    ipR[0][0] = 192;
+    ipR[0][1] = 168;
+    ipR[0][2] = 1;
+    ipR[0][3] = 1;
+    insert_table("router", ipR, 1, true);
+
     time_t last_cleanup = time(NULL);
 
     struct sockaddr_in ser_addr, cli_addr;
@@ -177,30 +186,10 @@ void dns_main(int rx_fd, int tx_fd){
 
         // For reading & processing commands from router
         if (FD_ISSET(rx_fd, &rfds)) {
-            // append_ln_to_log_file_dns("I see something on rx_fd");
             char buffer[256];
             ssize_t count;
-
-            // char command[256];
-            // int pos = 0;
-
             if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
-                // append_ln_to_log_file_dns("I read something on rx_fd");
-                append_ln_to_log_file_dns("count is %d, buffer is %s", count, buffer);
-                // for (int i = 0; i < count; i++)
-                // {
-                //     if (buffer[i] == '\n')
-                //     {
-                //         command[pos] = '\0';
-                //         handle_ntp_command(rx_fd, tx_fd, command);
-                //         pos = 0;
-                //     }
-                //     else
-                //     {
-                //         command[pos++] = buffer[i];
-                //     }
-                // }
                 buffer[count - 1] = '\0';
                 handle_dns_command(rx_fd, tx_fd, buffer);
             }
@@ -226,7 +215,6 @@ void dns_main(int rx_fd, int tx_fd){
 
             dns_hdr hdr;
             int offset = process_packet(&hdr, buffer);
-            // append_ln_to_log_file_dns("end of process packet...\n");
             
             if (offset < 0) continue;      // There was an error in get_domain so abandon this request
 
@@ -263,23 +251,24 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         close(tx_fd);
         exit(EXIT_SUCCESS);
     }
-    else if (strncmp(command, "set ", 6) == 0) {
+    else if (strncmp(command, "set ", 4) == 0) {
         // TODO: Check if the domain name is alr in table and bounce back if so
         //
         dns_entry map;
-        char *domain = strtok(command + 6, " ");
-        char *temp_ip = strtok(NULL, " ");
+        char *domain = command + 4;
+        char *temp_ip = strchr(domain, ' ') + 1;
+        *(temp_ip - 1) = '\0'; // Make sure domain is null terminated. temp_ip should be already
         if (domain == NULL || temp_ip == NULL) {
             write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
             return;
         }
         unsigned char ip[MAX_IPS][IP_LENGTH];
+        int index = 0;
         for (int i = 0; i < IP_LENGTH; i++) {
             char buf[4];
-            int index = 0;
             int j = 0;
             for ( ; j < 4; j++, index++) {
-                if (temp_ip[index] == '.') {
+                if (temp_ip[index] == '.' || temp_ip[index] == '\0') {
                     buf[j] = '\0';
                     break;
                 }
@@ -287,6 +276,7 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                     buf[j] = temp_ip[index];
                 }
             }
+            index++;
             if (j == 0 || j == 4) { // If buf is empty or not null terminated by now
                 write(tx_fd, "DNS: Incorrect Usage (set [Domain Name] [IPv4 Address])\n", 58);
                 return;
@@ -323,7 +313,6 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
         dns_bucket *start = domain_table[0];
         dns_bucket *prev = start;
         dns_bucket *curr = prev->next;
-
         while (start != curr) {
             // TODO: display info for each entry
             offset += snprintf(output + offset, sizeof(output) - offset, "Name: %s\nAddress(es):\n", curr->entry.domain);
@@ -332,11 +321,15 @@ void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
                 offset += snprintf(output + offset, sizeof(output) - offset, "\t%d.%d.%d.%d\n", curr->entry.ip[i][0], curr->entry.ip[i][1], curr->entry.ip[i][2], curr->entry.ip[i][3]);
                 // if (i + 1 < curr->entry.numIp) offset += snprintf(output + offset, sizeof(output) - offset, " == ");
             }
-       
             time_t ttl_time = curr->entry.ttl;
-            char buffer[26];
-            strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
-            offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: %s\n\n", buffer);
+            if (ttl_time == LONG_MAX) {
+                offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: never (permanent alias)\n\n");
+            }
+            else {
+                char buffer[26];
+                strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&ttl_time));
+                offset += snprintf(output + offset, sizeof(output) - offset, "Expires At: %s\n\n", buffer);
+            }
 
             // Move on to the next entry
             prev = curr;
@@ -422,14 +415,12 @@ unsigned long insert_table(unsigned char *domain, unsigned char ip[][IP_LENGTH],
     if ((domain_table[index] = malloc(sizeof(dns_bucket))) == NULL) append_ln_to_log_file_dns("malloc");
     memset(domain_table[index], 0, sizeof(dns_bucket));
     strncpy(domain_table[index]->entry.domain, domain, strlen(domain));
-    domain_table[index]->entry.domain[strlen(domain)] = '\0';
+    domain_table[index]->entry.domain[MAX_DN_LENGTH-1] = '\0';
     domain_table[index]->entry.numIp = numIp;
 
     for (int i = 0; i < numIp; ++i) {
         for (int j = 0; j < IP_LENGTH; ++j) {
-            // append_ln_to_log_file_dns("before forloop ip with ip[i][j] %d...\n", ip[i][j]);
             domain_table[index]->entry.ip[i][j] = ip[i][j];
-            // append_ln_to_log_file_dns("after forloop ip iteration %d %d...\n", i, j);
         }
     }
 
@@ -625,13 +616,12 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     unsigned char targetDomain[MAX_DN_LENGTH];
     memcpy(targetDomain, map->domain, MAX_DN_LENGTH);
     for (int k = 0; k < hdr.numA; k++) {
-        append_ln_to_log_file_dns("answer"); // debugging
         // identify the domain name for this entry
         unsigned char tempDomain[MAX_DN_LENGTH];
         memset(tempDomain, '\0', MAX_DN_LENGTH);
         process_domain(temp, buffer, tempDomain, 0); // Will find the domain name that is pointed to by the ptr to domain name
         if (strcmp(targetDomain, tempDomain) != 0) {
-            append_ln_to_log_file_dns("cname order messed up"); // Still go through with returning the error dns header to the client
+            append_ln_to_log_file_dns("cnames not in a chain not implemented"); // Still go through with returning the error dns header to the client
             return -1;
         }
         // identify the type of answer
@@ -639,7 +629,6 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
         unsigned short typ = ntohs(*(unsigned short*)(buffer + temp));        
         // map->type = ntohs(*(unsigned short*)(buffer + temp));
         if (typ == 1) {
-            append_ln_to_log_file_dns("ipAns"); // debugging
             // Then we know this is a A record so...
             temp += 10;
             for (int l = 0; l < IP_LENGTH; l++) {
@@ -650,8 +639,6 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
             if (numAnsIp == MAX_IPS) break;
         }
         else if (typ == 5) {
-            append_ln_to_log_file_dns("yay we found a cname"); // debugging
-
             // Then we know this is a CNAME so...
             temp += 8;
             int len = ntohs(*(unsigned short*)(buffer + temp));
@@ -672,11 +659,7 @@ int get_domain(dns_entry *map, int offset, unsigned char *buffer, bool notAuthor
     
     // end TODO 
     
-    // append_ln_to_log_file_dns("start of insert table...\n");
     index = insert_table(map->domain, map->ip, numAnsIp, false);
-    // append_ln_to_log_file_dns("end of insert table...\n");
-
-    // for (int k = 0; k < hdr.numA; k++) *(unsigned int*)map->ip[k] = htonl(*(unsigned int*)map->ip[k]); // So network byte order for sending
 
     memcpy(map, &domain_table[index]->entry, sizeof(dns_entry));
     return 0;
@@ -756,7 +739,6 @@ int process_packet(dns_hdr *hdr, unsigned char *buffer) {
     // If there are no errors with the incoming DNS query, we will handle it
     // Otherwise, we will return just the DNS header with Not Implemented RCODE 4
     int offset = !hasError ? process_query(hdr, buffer) : sizeof(dns_hdr);
-    // append_ln_to_log_file_dns("end of process query...\n");
 
     // If there was an error in process_query from get_domain
     if (offset == -1) {
@@ -826,7 +808,6 @@ int process_query(dns_hdr *hdr, unsigned char *buffer) {
     // Looks up the ith domain stored in map.domain and stores the dns_entry in map
     // Will either retreive from table or retrieve upstream
     int ret = get_domain(&map, offset, buffer, hdr->rd);
-    // append_ln_to_log_file_dns("end of get domain...\n");
 
     if (ret < 0) { // If there was an error (-1) or if the domain wasn't found (-2)
         return ret; 

@@ -789,10 +789,6 @@ bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))) 
         }
         // If bytes_received == 0, it's unusual, treat as no reply and let timeout handle it.
     } // End while loop
-
-    // If loop finished because break was called (reply_found is true), conflict is true.
-    // If loop finished because timeout expired (select_ret == 0), conflict is false.
-
 cleanup_and_return:
     close(sock_raw_icmp);
     return conflict;
@@ -807,7 +803,6 @@ void mark_ip_conflicted(uint32_t conflicted_ip) {
      pthread_mutex_lock(&lease_mutex);
      for (int i = 0; i < MAX_LEASES; i++) {
          // Find the lease slot corresponding to the IP
-         // This relies on the IP allocation scheme being consistent (htonl(0xC0A80A00 | (i + 100)))
          if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + 100)) == conflicted_ip) {
               leases[i].active = 0; // Mark inactive
               leases[i].conflict_detected_time = now;
@@ -1301,7 +1296,7 @@ void send_dhcp_raw(int raw_sock,
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
                   dhcp_packet *payload, size_t payload_len,
-                  int tx_fd __attribute__((unused))) { // Mark tx_fd as unused
+                  int tx_fd __attribute__((unused))) {
     
     uint8_t buf[MAX_FRAME_LEN];
     memset(buf, 0, sizeof(buf));
