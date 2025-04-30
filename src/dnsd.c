@@ -271,6 +271,7 @@ void dns_main(int rx_fd, int tx_fd){
 }
 
 void handle_dns_command(int rx_fd, int tx_fd, unsigned char *command) {
+    append_ln_to_log_file_dns("%s", command);
     if (strcmp(command, "shutdown") == 0) {
         // Clean shutdown on EOF or explicit command
         clean_table(true);
