@@ -30,8 +30,7 @@
 #define DEFAULT_LAN_IFACE "enp0s8"      // Configurable by command.
 #define DEFAULT_WAN_IFACE "enp0s3"      // Configurable by command.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_LOG_PATH "/home/osboxes/cs536/router/logs/nat.log" // "/tmp/linux-router/logs/"
-#define NAT_LOG_FILE_NAME "nat.log"
+#define DEFAULT_LOG_PATH "/home/osboxes/cs536/router/logs/nat.log" // "/tmp/linux-router/logs/nat.log"
 
 #define TCP_IP_TYPE 6
 #define UDP_IP_TYPE 17
@@ -77,6 +76,7 @@ const reserved_ports_for_inbound port_list[] = {
 // Global variables:
 static int lan_raw, wan_raw, rx_fd, tx_fd;
 static char *log_file_path = DEFAULT_LOG_PATH;
+static FILE *log_file;
 static uint8_t wan_machine_mac[6], lan_machine_mac[6];
 static uint32_t wan_machine_ip, lan_machine_ip, wan_gateway_ip;
 static char wan_machine_ip_str[INET_ADDRSTRLEN];
@@ -259,88 +259,6 @@ void cleanup_all_nat_entries(void) {
     append_ln_to_log_file_nat("NAT: All entries cleaned up");
 }
 
-// TODO: Fix formatting.
-/* 
-Example: Current situation:
-root@router# nat:entries
-Orig IP         O_Port  Trans IP        T_Port  Proto   Last Used            Custom Timeout (sec)
----------------------------------------------------------------------------------------------
-192.168.20.2    52730   10.0.2.15       32770   UDP     2025-04-h+���
-28 14:29:54  0                  <- This new line shouldn't be here.
-192.168.20.2    50954   10.0.2.15       32769   UDP     2025-04-28 14:29:44  0              
-192.168.20.2    56164   10.0.2.15       32768   UDP     2025-04-28 14:29:34  0              
-192.168.20.2    56915   10.0.2.15       3h+���
-2771   UDP     2025-04-28 14:29:59  0 
-Every time it fails, it prints h+��� before breaking the line. Need to print in hex to see what's happening.
-*/
-void print_nat_table_outbound_hashed_to_fd() {
-    char msg[512];
-    int count = 0;
-
-    // Print header line
-
-    count = snprintf(msg, sizeof(msg),
-                "Active NAT entries: %d\n\n", nat_entry_count);
-    if (count > 0) {
-        msg[count+1] = "\0";
-        write(tx_fd, msg, count);
-    }
-
-    count = snprintf(msg, sizeof(msg),
-               "%-15s %-7s %-15s %-7s %-7s %-20s %-15s\n"
-               "---------------------------------------------------------------------------------------------\n",
-               "Orig IP", "O_Port", "Trans IP", "T_Port", "Proto", "Last Used", "Custom Timeout (sec)");
-    if (count > 0) {
-        msg[count+1] = "\0";
-        write(tx_fd, msg, count);
-    }
-    
-    // Iterate through each entry and write one line at a time
-    for (int i = 0; i < NAT_TABLE_SIZE; i++) {
-        struct nat_bucket *bucket = nat_table_outbound[i];
-        while (bucket) {
-            struct nat_entry *e = bucket->entry;
-            char orig_ip_str[INET_ADDRSTRLEN];
-            char trans_ip_str[INET_ADDRSTRLEN];
-            char last_used_str[30] = {0};  // Fixed array size with initialization
-            
-            // Safe IP conversion
-            if (!inet_ntop(AF_INET, &e->orig_ip, orig_ip_str, INET_ADDRSTRLEN)) {
-                strncpy(orig_ip_str, "Invalid IP", INET_ADDRSTRLEN-1);
-                orig_ip_str[INET_ADDRSTRLEN-1] = '\0';
-            }
-            if (!inet_ntop(AF_INET, &e->trans_ip, trans_ip_str, INET_ADDRSTRLEN)) {
-                strncpy(trans_ip_str, "Invalid IP", INET_ADDRSTRLEN-1);
-                trans_ip_str[INET_ADDRSTRLEN-1] = '\0';
-            }
-            
-            // Get protocol string
-            const char* proto_str = protocol_to_str(e->protocol);
-            
-            // Safe timestamp formatting
-            struct tm *tm_info = localtime(&e->last_used);
-            if (tm_info) {
-                strftime(last_used_str, sizeof(last_used_str), "%Y-%m-%d %H:%M:%S", tm_info);
-            } else {
-                strncpy(last_used_str, "Invalid time", sizeof(last_used_str));
-            }
-            
-            // Format entry and write to fd
-            count = snprintf(msg, sizeof(msg),
-                     "%-15s %-7u %-15s %-7u %-7s %-20s %-15u\n",
-                     orig_ip_str, e->orig_port_host, trans_ip_str, e->trans_port_host, 
-                     proto_str, last_used_str, e->custom_timeout);
-            
-            if (count > 0) {
-                msg[count+1] = "\0";
-                write(tx_fd, msg, count);
-            }
-            
-            bucket = bucket->next;
-        }
-    }
-}
-
 void print_nat_table() {
     char buffer[1024];
     int len;
@@ -348,10 +266,10 @@ void print_nat_table() {
     // Print header
     const char *header = "NAT Table Entries\n";
     const char *separator = "------------------------------------------------\n";
-    const char *format = "%-15s:%-6s -> %-15s:%-6s %s\n";
+    const char *format = "%-15s:%-6s <-> %-15s:%-6s %s\n";
     
-    write(tx_fd, header, strlen(header));
-    write(tx_fd, separator, strlen(separator));
+    // write(tx_fd, header, strlen(header));
+    // write(tx_fd, separator, strlen(separator));
     
     // Print entry count
     len = snprintf(buffer, sizeof(buffer), "Total entries: %d\n\n", nat_entry_count);
@@ -383,7 +301,7 @@ void print_nat_table() {
             }
             
             // Format the entry line
-            len = snprintf(buffer, sizeof(buffer), "%-15s:%-6s -> %-15s:%-6s %s\n",
+            len = snprintf(buffer, sizeof(buffer), format,
                          orig_ip_str, orig_port_str,
                          trans_ip_str, trans_port_str,
                          proto_str);
@@ -687,9 +605,7 @@ void cleanup_expired_nat_entries() {
             } else if (entry->protocol == 6) {  // TCP
                 if (entry->state == NAT_TCP_ESTABLISHED) {
                     timeout = tcp_timeout;
-                } else if (entry->custom_timeout){
-                    timeout = entry->custom_timeout;
-                }                
+                }
                 else{
                     timeout = tcp_transitory_timeout;
                 }
@@ -966,50 +882,48 @@ char* time_to_fstr(time_t _time, char buffer[26]){
 }
 
 static void clear_log_file() {
-    FILE *log_file = fopen(log_file_path, "w");
+    log_file = fopen(log_file_path, "w");
     if (log_file) {
         fprintf(log_file, "\n\n");
-        fclose(log_file);
         append_ln_to_log_file_nat_verbose("Log file cleared.");
     }
+    log_file = fopen(log_file_path, "a");
 }
 
-static void vappend_ln_to_log_file_nat(const char *msg, va_list args) {
-
+// Invoked every time when nat table is cleaned up.
+void clean_log_file_if_full(){
     // Clean up the log file if the size is more than 10 MB.
-    va_list argp;  
-
-    FILE *log_file = fopen(log_file_path, "r");
+    log_file = fopen(log_file_path, "r");
     if (log_file) {
         fseek(log_file, 0, SEEK_END);
         long file_size = ftell(log_file);
-        fclose(log_file);
         
         if (file_size > MAX_LOG_SIZE) {
             clear_log_file();
             append_ln_to_log_file_nat_verbose("Log file size exceeded %d bytes.", MAX_LOG_SIZE);
         }
     }
-
-    if (msg == NULL || strcmp("", msg) == 0){
-        log_file = fopen(log_file_path, "a");
-        if (log_file) {
-            fprintf(log_file, "\n");
-            fclose(log_file);
-        }
-        return;
-    }
-
-    time_t now = time(NULL);
-    char buffer[26];
-    strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
-    
     log_file = fopen(log_file_path, "a");
-    if (log_file) {
+}
+
+static void vappend_ln_to_log_file_nat(const char *msg, va_list args) {
+    
+    if (log_file){
+        write(tx_fd, "6", 1);
+        va_list argp;  
+        
+        if (msg == NULL || strcmp("", msg) == 0){
+            fprintf(log_file, "\n");
+            return;
+        }
+        time_t now = time(NULL);
+        char buffer[26];
+        strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
+
         fprintf(log_file, "[%s] ", buffer);
         vfprintf(log_file, msg, args);
         fprintf(log_file, "\n");
-        fclose(log_file);
+        write(tx_fd, "7", 1);
     }
 }
 
@@ -1022,12 +936,16 @@ void append_ln_to_log_file_nat(const char *msg, ...) {
 }
 
 void append_ln_to_log_file_nat_verbose(const char *msg, ...) {
+    
+    write(tx_fd, "3", 1);
     if (verbose != 1) return;
-
+    
+    write(tx_fd, "4", 1);
     va_list args;
     va_start(args, msg);
     vappend_ln_to_log_file_nat(msg, args);
     va_end(args);
+    write(tx_fd, "5", 1);
 }
 
 void get_machine_ip(const char *iface, char *gateway_ip, size_t size) {
@@ -1059,7 +977,11 @@ void get_machine_ip(const char *iface, char *gateway_ip, size_t size) {
 
 // This should be called once at the start of the program.
 void init_and_load_configurations() {
-       
+    
+    write(tx_fd, "1", 1);
+    clean_log_file_if_full();
+    write(tx_fd, "2", 1);
+
     append_ln_to_log_file_nat_verbose("Verbose mode enabled.");
     
     // Load defaults:
@@ -1090,6 +1012,46 @@ void init_and_load_configurations() {
     append_ln_to_log_file_nat_verbose(NULL);
 
     // If failed, throw a critical error to router and log it.
+}
+
+void send_icmp_time_exceeded(struct ipv4_header *ip_header, struct raw_ethernet_frame *eth_frame, packet_direction_t direction) {
+    uint8_t icmp_buffer[sizeof(struct ethernet_header) + sizeof(struct ipv4_header) + sizeof(struct icmp_error)];
+
+    // Setup Ethernet header
+    struct ethernet_header *eth = (struct ethernet_header *)icmp_buffer;
+    memcpy(eth->dst_mac, eth_frame->header.src_mac, 6);
+    memcpy(eth->src_mac, (direction == OUTBOUND) ? lan_machine_mac : wan_machine_mac, 6);
+    eth->type = htons(IPV4_ETH_TYPE);
+
+    // Setup IP header for ICMP response
+    struct ipv4_header *icmp_ip = (struct ipv4_header *)(icmp_buffer + sizeof(struct ethernet_header));
+    *icmp_ip = (struct ipv4_header){
+        .version = 4, .ihl = 5, .ttl = 64,
+        .protocol = ICMP_IP_TYPE,
+        .saddr = (direction == OUTBOUND) ? lan_machine_ip : wan_machine_ip,
+        .daddr = ip_header->saddr
+    };
+
+    // Setup ICMP Time Exceeded message
+    struct icmp_error *icmp_err = (struct icmp_error *)(icmp_buffer + sizeof(struct ethernet_header) + sizeof(struct ipv4_header));
+    icmp_err->type = 11;  // Time Exceeded
+    icmp_err->code = 0;   // TTL exceeded in transit
+    icmp_err->checksum = 0;
+
+    // Include original IP header + 8 bytes of original data
+    memcpy(icmp_err->orig_header, ip_header, sizeof(icmp_err->orig_header));
+
+    // Calculate ICMP checksum
+    icmp_err->checksum = compute_checksum(icmp_err, sizeof(struct icmp_error));
+
+    // Calculate IP header length & checksum
+    icmp_ip->tot_len = htons(sizeof(struct ipv4_header) + sizeof(struct icmp_error));
+    update_ip_checksum(icmp_ip);
+
+    // Send the ICMP Time Exceeded message back to source
+    send_raw_frame(eth->dst_mac, IPV4_ETH_TYPE, icmp_buffer, sizeof(icmp_buffer), (direction == OUTBOUND) ? INBOUND : OUTBOUND);
+
+    append_ln_to_log_file_nat_verbose("[TTL Expired] Dropped packet and sent ICMP Time Exceeded");
 }
 
 
@@ -1301,19 +1263,17 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             append_ln_to_log_file_nat_verbose("Packet Details outbound: %d -> %d", ntohs(tcp_h->sport), ntohs(tcp_h->dport));
 
             // Verify original checksum before translation
-            if (false){     // Bypassing it, to check the performance.
-                uint16_t received_check = tcp_h->check;
-                tcp_h->check = 0;
-                uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
+            uint16_t received_check = tcp_h->check;
+            tcp_h->check = 0;
+            uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
     
-                if (calculated_check != received_check && received_check != 0) {
-                    append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
-                                            ntohs(received_check), ntohs(calculated_check));
-                    append_ln_to_log_file_nat_verbose(NULL);
-                    return;
-                }
-                append_ln_to_log_file_nat_verbose("TCP checksum validated");
+            if (calculated_check != received_check && received_check != 0) {
+                append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
+                                        ntohs(received_check), ntohs(calculated_check));
+                append_ln_to_log_file_nat_verbose(NULL);
+                return;
             }
+            append_ln_to_log_file_nat_verbose("TCP checksum validated");
 
             // Create NAT entry
             received_packet_details->orig_port_host = ntohs(tcp_h->sport);
@@ -1343,15 +1303,15 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
                 }
                 translated_nat_entry->last_used = time(NULL);
             }
-            if (flags & (1 << 6)) {  // RST (Reset)
+            else if (flags & (1 << 6)) {  // RST (Reset)
                 translated_nat_entry->state = NAT_TCP_CLOSING;
                 translated_nat_entry->custom_timeout = 60; // 60s FIN_WAIT timeout
             }
-            if (flags & (1 << 7)) {  // SYN (Synchronize)
+            else if (flags & (1 << 7)) {  // SYN (Synchronize)
                 translated_nat_entry->state = NAT_TCP_SYN_SENT;
                 translated_nat_entry->last_used = time(NULL);
             }
-            if (flags & (1 << 8)) {  // FIN (Finish)
+            else if (flags & (1 << 8)) {  // FIN (Finish)
                 translated_nat_entry->state = NAT_TCP_CLOSING;
                 translated_nat_entry->custom_timeout = 60; // 60s FIN_WAIT timeout
             }
@@ -1426,6 +1386,15 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     append_ln_to_log_file_nat_verbose("Protocol: %u", ip_header->protocol);
 
     
+    // Decrement TTL
+    if (ip_header->ttl <= 1) {
+        // TTL would reach zero - drop packet 
+        send_icmp_time_exceeded(ip_header, eth_frame, OUTBOUND);
+        append_ln_to_log_file_nat_verbose("[Drop] TTL expired, returned ICMP time exceeded.");
+        return;
+    }
+    ip_header->ttl--;
+
     // Recalculate IP checksum
     ip_header->check = 0; // Reset checksum before recalculation
     ip_header->check = compute_checksum(ip_header, ip_header->ihl * 4);
@@ -1611,19 +1580,17 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             }
 
             // Verify original checksum before translation
-            if (false){     // Bypassing it, to check the performance.
-                uint16_t received_check = tcp_h->check;
-                tcp_h->check = 0;
-                uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
+            uint16_t received_check = tcp_h->check;
+            tcp_h->check = 0;
+            uint16_t calculated_check = compute_tcp_checksum(ip_header, tcp_header_len, tcp_h, tcp_payload, tcp_payload_len);
     
-                if (calculated_check != received_check && received_check != 0) {
-                    append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
-                                            ntohs(received_check), ntohs(calculated_check));
-                    append_ln_to_log_file_nat_verbose(NULL);
-                    return;
-                }
-                append_ln_to_log_file_nat_verbose("TCP checksum validated");
+            if (calculated_check != received_check && received_check != 0) {
+                append_ln_to_log_file_nat_verbose("[Error] Invalid TCP checksum: recv=0x%04x calc=0x%04x",
+                                        ntohs(received_check), ntohs(calculated_check));
+                append_ln_to_log_file_nat_verbose(NULL);
+                return;
             }
+            append_ln_to_log_file_nat_verbose("TCP checksum validated");
 
             // Get NAT translation
             received_packet_details->trans_port_host = ntohs(tcp_h->dport);
@@ -1652,17 +1619,17 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
                 }
                 enriched_entry->last_used = time(NULL);
             }
-            if (flags & (1 << 6)) {  // RST
+            else if (flags & (1 << 6)) {  // RST
                 enriched_entry->state = NAT_TCP_CLOSING;
                 enriched_entry->custom_timeout = 60; // 60s timeout
             }
-            if (flags & (1 << 7)) {  // SYN (unexpected in established connections)
+            else if (flags & (1 << 7)) {  // SYN (unexpected in established connections)
                 if (enriched_entry->state == NAT_TCP_ESTABLISHED) {
                     // Simultaneous open or connection reset
                     enriched_entry->state = NAT_TCP_CLOSING;
                 }
             }
-            if (flags & (1 << 8)) {  // FIN
+            else if (flags & (1 << 8)) {  // FIN
                 enriched_entry->state = NAT_TCP_CLOSING;
                 enriched_entry->custom_timeout = 60; // 60s FIN_WAIT timeout
             }
@@ -1728,6 +1695,15 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
         default:            // Unsupported protocol
             return;
     }
+
+    // Decrement TTL
+    if (ip_header->ttl <= 1) {
+        // TTL would reach zero - drop packet 
+        send_icmp_time_exceeded(ip_header, eth_frame, INBOUND);
+        append_ln_to_log_file_nat_verbose("[Drop] TTL expired, returned ICMP time exceeded.");
+        return;
+    }
+    ip_header->ttl--;
     
     // Recalculate IP checksum:
     ip_header->check = 0; // Reset checksum before recalculation
@@ -1768,10 +1744,10 @@ void nat_main(int router_rx, int router_tx, int verbose_l) {
     // Send the PID to router process for "killing" purposes.
     pid_t pid = getpid();
     send_to_router(&pid, sizeof(pid_t));
-    
-    append_ln_to_log_file_nat_verbose("NAT service started.");
 
     init_and_load_configurations();
+    
+    append_ln_to_log_file_nat_verbose("NAT service started.");
 
     time_t last_cleanup = time(NULL);   // Started empty.
 
@@ -1786,14 +1762,13 @@ void nat_main(int router_rx, int router_tx, int verbose_l) {
         // Calculate time until next cleanup  
         time_t now = time(NULL);  
         time_t next_cleanup = last_cleanup + cleanup_interval;  
-        int sec_remaining = (next_cleanup > now) ? (next_cleanup - now) : 0;
 
         // Check if cleanup is due  
-        if (sec_remaining >= cleanup_interval) {  
-            cleanup_all_nat_entries();  
+        if (now >= next_cleanup) {  
+            cleanup_expired_nat_entries();  
+            clean_log_file_if_full();
             last_cleanup = now;  
         }
-        // TODO: Hasn't cleaned the entries even after the timeout. Check the time from 6:45 to 5:50 22nd April.
 
 
         struct timeval tv = {.tv_sec = 1, .tv_usec = 0}; // 1 second select timeout.

@@ -101,43 +101,60 @@ void update_ip_checksum(struct ipv4_header* ip) {
     ip->check = compute_checksum(ip, ip->ihl * 4); // Only header, no payload
 }
 
-uint16_t compute_tcp_checksum(struct ipv4_header* ip, uint8_t tcp_header_len, struct tcp_header* tcp, const uint8_t* payload, uint16_t payload_len) {
+uint16_t compute_tcp_checksum(struct ipv4_header* ip, uint8_t tcp_header_len, 
+                             struct tcp_header* tcp, const uint8_t* payload, 
+                             uint16_t payload_len) {
     
-    #pragma pack(push, 1) 
+    static __thread uint8_t checksum_buffer[2048];
+    
+    #pragma pack(push, 1)
     struct {
-        uint32_t src_addr;  // SRC IP ADDRESS
-        uint32_t dst_addr;  // DST IP ADDRESS
-        uint8_t zeros;      // 8 bits of just '0's. NOT YET DEFINED, just reserved.
-        uint8_t protocol;   // TCP (6) OR UDP, apparently UDP can also use pseudo header.
-        uint16_t tcp_len;   // TCP PACKET (HEADER + DATA) LENGTH
-    } pseudo_header;        // ONLY used for checksum calculation and NOT used in actual packet creation.
+        uint32_t src_addr;
+        uint32_t dst_addr;
+        uint8_t zeros;
+        uint8_t protocol;
+        uint16_t tcp_len;
+    } pseudo_header;
     #pragma pack(pop)
-    // Reference: https://www.baeldung.com/cs/pseudo-header-tcp#the-pseudo-header-in-tcpip
     
     // Populate pseudo-header
     pseudo_header.src_addr = ip->saddr;
     pseudo_header.dst_addr = ip->daddr;
     pseudo_header.zeros = 0;
     pseudo_header.protocol = IPPROTO_TCP;
-    pseudo_header.tcp_len = htons(ntohs(ip->tot_len) - (ip->ihl * 4)); // TCP segment length
+    pseudo_header.tcp_len = htons(ntohs(ip->tot_len) - (ip->ihl * 4));
     
-    // Create contiguous buffer
+    // Calculate total buffer size needed
     size_t total_len = sizeof(pseudo_header) + tcp_header_len + payload_len;
-    uint8_t *buf = malloc(total_len);
-
+    
+    // Use static buffer or fall back to heap for unusually large packets
+    uint8_t *buf = (total_len <= sizeof(checksum_buffer)) ? 
+                    checksum_buffer : malloc(total_len);
+    
+    if (!buf && total_len > sizeof(checksum_buffer)) {
+        return 0; // Handle allocation failure
+    }
+    
+    // Copy data into buffer
     memcpy(buf, &pseudo_header, sizeof(pseudo_header));
-    memcpy(buf + sizeof(pseudo_header), tcp, tcp_header_len); // Include TCP options
+    memcpy(buf + sizeof(pseudo_header), tcp, tcp_header_len);
     memcpy(buf + sizeof(pseudo_header) + tcp_header_len, payload, payload_len);
-
+    
     // Compute checksum
     uint16_t checksum = compute_checksum(buf, total_len);
-    free(buf);
-
+    
+    // Free only if we used heap allocation
+    if (buf != checksum_buffer) {
+        free(buf);
+    }
+    
     return checksum;
 }
 
 uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, const uint8_t* payload, size_t payload_len) {
     
+    static __thread uint8_t checksum_buffer[2048];
+
     #pragma pack(push, 1)
     struct {
         uint32_t src_addr;
@@ -156,7 +173,14 @@ uint16_t compute_udp_checksum(struct ipv4_header* ip, struct udp_header* udp, co
 
     // Combine all components into a single buffer
     size_t total_len = sizeof(pseudo_header) + sizeof(struct udp_header) + payload_len;
-    uint8_t *buf = malloc(total_len);
+    
+    // Use static buffer or fall back to heap for unusually large packets
+    uint8_t *buf = (total_len <= sizeof(checksum_buffer)) ? 
+                    checksum_buffer : malloc(total_len);
+    
+    if (!buf && total_len > sizeof(checksum_buffer)) {
+        return 0; // Handle allocation failure
+    }
     
     memcpy(buf, &pseudo_header, sizeof(pseudo_header));
     memcpy(buf + sizeof(pseudo_header), udp, sizeof(struct udp_header));
