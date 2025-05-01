@@ -308,7 +308,7 @@ void print_nat_table() {
             // Convert ports to strings
             int_to_str(entry->orig_port_host, orig_port_str, sizeof(orig_port_str));
             int_to_str(entry->trans_port_host, trans_port_str, sizeof(trans_port_str));
-            int_to_str(entry->timeout, timeout_str, sizeof(timeout_str));
+            // int_to_str(entry->timeout, timeout_str, sizeof(timeout_str));
 
             
             // Get protocol string
@@ -1261,22 +1261,25 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     // Get IP packet and header.
     struct ipv4_packet *ip_packet = extract_ipv4_packet_from_eth_payload(&eth_frame->payload);
     struct ipv4_header *ip_header = &ip_packet->header;
-
-    if (len > MTU + sizeof(struct ethernet_header)) {
-        send_icmp_frag(ip_header, eth_frame, OUTBOUND);
-        return;
-    }
-
     
-    if(ip_header->version != 4) return;         // Anything other than IPv4 SHALL NOT PASS!
-    
-    uint16_t translated_dport, translated_sport;
-
     // Is destination IP in the same subnet? Don't process it.
     if (is_local_bound_packet(ip_header->daddr, ip_header->saddr) == 1){
         append_ln_to_log_file_nat_verbose("NAT: Packet is local bound, not processing.");
         append_ln_to_log_file_nat_verbose(NULL);
         return;
+    }
+
+    if (len > MTU + sizeof(struct ethernet_header)) {
+        send_icmp_frag(ip_header, eth_frame, OUTBOUND);
+        return;
+    }
+    
+    if(ip_header->version != 4) return;         // Anything other than IPv4 SHALL NOT PASS!
+    
+    uint16_t translated_dport, translated_sport;
+
+    if (ip_header->ttl <= 1){
+        send_icmp_time_exceeded(ip_header, eth_frame, OUTBOUND);
     }
 
     // Create the NAT entry.
@@ -1537,7 +1540,6 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     append_ln_to_log_file_nat_verbose("WAN IP: %d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
     append_ln_to_log_file_nat_verbose("WAN Port: %u", translated_dport);
     append_ln_to_log_file_nat_verbose("Protocol: %u", ip_header->protocol);
-
     
     // Recalculate IP checksum
     ip_header->check = 0; // Reset checksum before recalculation
@@ -1607,6 +1609,10 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     if (len > MTU + sizeof(struct ethernet_header)) {
         send_icmp_frag(ip_header, eth_frame, INBOUND);
         return;
+    }
+
+    if (ip_header->ttl <= 1){
+        send_icmp_time_exceeded(ip_header, eth_frame, INBOUND);
     }
 
     if(ip_header->version != 4) return;                                                 // Anything other than IPv4 SHALL NOT PASS!
