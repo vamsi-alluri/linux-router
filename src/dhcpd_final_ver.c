@@ -41,7 +41,7 @@ uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
 const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
-uint32_t IP_ALLOC_START_OFFSET = 2;  // set 1000 to test 0.0.0.0 ignorance feature
+uint32_t IP_ALLOC_START_OFFSET = 2;
 
 typedef struct
 {
@@ -619,6 +619,8 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
                 append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr_log));
                 leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
             }
+            // Optimization: If we found a truly expired/inactive slot, prefer it over a previously conflicted one.
+            // For simplicity now, we just take the first available slot encountered.
             break; // Take the first suitable slot found in the loop
         }
     }
@@ -640,12 +642,11 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
         uint32_t current_server_ip_h = ntohl(server_ip);
 
         if (assigned_ip_h <= base_ip_h || assigned_ip_h >= current_broadcast_addr_h || assigned_ip_h == current_server_ip_h) {
-             append_ln_to_log_file("DHCP: Calculated IP %u for slot %d is invalid for network %s. Skipping slot.", assigned_ip_h, i, inet_ntoa(*(struct in_addr*)&network_addr));
-             leases[i].active = 0; // Mark inactive again
-             memset(leases[i].mac, 0, 6); // Optional: Clear MAC too
-             leases[i].lease_start = 0; // Optional: Clear times
-             leases[i].lease_end = 0;
-             allocated_ip = 0; // Mark as failed for this attempt
+            append_ln_to_log_file("DHCP: Calculated IP %u for slot %d is invalid for network %s. Skipping slot.", assigned_ip_h, i, inet_ntoa(*(struct in_addr*)&network_addr));
+            memset(&leases[i], 0, sizeof(dhcp_lease)); // Clear the entire lease structure for this slot             // This case ideally shouldn't be hit often if MAX_LEASES is reasonable
+            // and the loop in step 2 correctly finds an available slot.
+            // Consider adding logic here to try the *next* available slot if this happens.
+            allocated_ip = 0; // Mark as failed for this attempt
         } else {
             leases[i].ip = htonl(assigned_ip_h); // Assign the calculated IP in network byte order
             leases[i].conflict_detected_time = 0; // Ensure conflict time is cleared for the new lease
