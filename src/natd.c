@@ -1175,7 +1175,7 @@ void send_icmp_frag(struct ipv4_header *ip_header, struct raw_ethernet_frame *et
     icmp_err->type = 3;  // Destination Unreachable
     icmp_err->code = 4;   // Fragmentation Needed
     icmp_err->unused = 0;   // Only need for bytes 4–5 because MTU
-    ((uint16_t *)icmp_err)[3] = htons(BUFFER_SIZE - sizeof(struct ethernet_header));  // MTU in unused field (bytes 6–7)  
+    ((uint16_t *)icmp_err)[3] = htons(MTU);  // MTU in unused field (bytes 6–7)  
     icmp_err->checksum = 0;
 
     // Include original IP header + 8 bytes of original data
