@@ -1127,6 +1127,48 @@ void send_icmp_time_exceeded(struct ipv4_header *ip_header, struct raw_ethernet_
     append_ln_to_log_file_nat_verbose("[TTL Expired] Dropped packet and sent ICMP Time Exceeded");
 }
 
+void send_icmp_frag(struct ipv4_header *ip_header, struct raw_ethernet_frame *eth_frame, packet_direction_t direction) {
+    uint8_t icmp_buffer[sizeof(struct ethernet_header) + sizeof(struct ipv4_header) + sizeof(struct icmp_error)];
+
+    // Setup Ethernet header
+    struct ethernet_header *eth = (struct ethernet_header *)icmp_buffer;
+    memcpy(eth->dst_mac, eth_frame->header.src_mac, 6);
+    memcpy(eth->src_mac, (direction == OUTBOUND) ? lan_machine_mac : wan_machine_mac, 6);
+    eth->type = htons(IPV4_ETH_TYPE);
+
+    // Setup IP header for ICMP response
+    struct ipv4_header *icmp_ip = (struct ipv4_header *)(icmp_buffer + sizeof(struct ethernet_header));
+    *icmp_ip = (struct ipv4_header){
+        .version = 4, .ihl = 5, .ttl = 64,
+        .protocol = ICMP_IP_TYPE,
+        .saddr = (direction == OUTBOUND) ? lan_machine_ip : wan_machine_ip,
+        .daddr = ip_header->saddr
+    };
+
+    // Setup ICMP Destination Unreachable — Fragmentation Needed message
+    struct icmp_error *icmp_err = (struct icmp_error *)(icmp_buffer + sizeof(struct ethernet_header) + sizeof(struct ipv4_header));
+    icmp_err->type = 3;  // Destination Unreachable
+    icmp_err->code = 4;   // Fragmentation Needed
+    icmp_err->unused = 0;   // Only need for bytes 4–5 because MTU
+    ((uint16_t *)icmp_err)[3] = htons(BUFFER_SIZE - sizeof(struct ethernet_header));  // MTU in unused field (bytes 6–7)  
+    icmp_err->checksum = 0;
+
+    // Include original IP header + 8 bytes of original data
+    memcpy(icmp_err->orig_header, ip_header, sizeof(icmp_err->orig_header));
+
+    // Calculate ICMP checksum
+    icmp_err->checksum = compute_checksum(icmp_err, sizeof(struct icmp_error));
+
+    // Calculate IP header length & checksum
+    icmp_ip->tot_len = htons(sizeof(struct ipv4_header) + sizeof(struct icmp_error));
+    update_ip_checksum(icmp_ip);
+
+    // Send the ICMP Destination Unreachable — Fragmentation Needed message back to source
+    send_raw_frame(eth->dst_mac, IPV4_ETH_TYPE, icmp_buffer, sizeof(icmp_buffer), (direction == OUTBOUND) ? INBOUND : OUTBOUND);
+
+    append_ln_to_log_file_nat_verbose("[Packet Too Large] Dropped packet and sent ICMP Destination Unreachable — Fragmentation Needed");
+}
+
 void send_raw_frame(uint8_t *dest_mac, uint16_t protocol, void *data, size_t len, packet_direction_t direction) {
     struct sockaddr_ll dest_addr = {0};
     dest_addr.sll_family = AF_PACKET;
@@ -1634,6 +1676,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             // Validate payload access
             if ((tcp_payload + tcp_payload_len) > (buffer + len)) {
                 append_ln_to_log_file_nat("[Error] TCP payload exceeds packet buffer");
+                send_icmp_frag(ip_header, eth_frame, OUTBOUND);
                 return;
             }
 
