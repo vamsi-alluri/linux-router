@@ -24,8 +24,9 @@ typedef struct
 
 static time_t last_refresh;
 static int refresh_interval;
+static int verbose_g;
 
-void ntp_main(int rx_fd, int tx_fd);
+void ntp_main(int rx_fd, int tx_fd, int verbose_p);
 time_t refresh_time();
 void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command);
 void append_ln_to_log_file_ntp(const char *msg, ...);
