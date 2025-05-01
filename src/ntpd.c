@@ -232,8 +232,13 @@ void ntp_main(int rx_fd, int tx_fd, int verbose_p)
             // Had to change from bit fields
             out_packet.li_vn_mode = 0b00100100;
             out_packet.strat = 4; // Secondary Server (using local router time, not GPS)
-            out_packet.xmtSec = htonl(time(NULL)              // Local UNIX time + Diff btwn UNIX and NTP times,
-                                    + NTP_TIMESTAMP_DELTA); // then convert byte order for 8 byte time
+            out_packet.orgSec = in_packet.xmtSec; // Copy query transmit time to the origin time
+            out_packet.orgFrc = in_packet.xmtFrc; // Copy query transmit time to the origin time
+            time_t now = time(NULL);
+            out_packet.recSec = htonl(now              // Local UNIX time + Diff btwn UNIX and NTP times,
+                        + NTP_TIMESTAMP_DELTA); // then convert byte order for 8 byte time
+            out_packet.xmtSec = htonl(now              // Local UNIX time + Diff btwn UNIX and NTP times,
+                        + NTP_TIMESTAMP_DELTA); // then convert byte order for 8 byte time
 
             if ((send_len = sendto(s, &out_packet, sizeof(out_packet), 0,
                                    (struct sockaddr *)&cli_addr, slen)) < 0)
