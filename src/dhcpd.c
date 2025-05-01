@@ -963,13 +963,13 @@ void *handle_dhcp_request(void *arg) {
 
         if (use_raw) {
             unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &offer, sizeof(dhcp_packet), tx_fd);
+            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(broadcast_addr), &offer, sizeof(dhcp_packet), tx_fd);
         } else {
             struct sockaddr_in dest_addr;
             memset(&dest_addr, 0, sizeof(dest_addr));
             dest_addr.sin_family = AF_INET;
             dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
-            dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            dest_addr.sin_addr.s_addr = htonl(broadcast_addr );
             socklen_t dest_len = sizeof(dest_addr);
 
             if (sendto(s, &offer, sizeof(offer), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
@@ -1097,7 +1097,7 @@ void *handle_dhcp_request(void *arg) {
 
             if (use_raw) {
                 unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &response_pkt, sizeof(response_pkt), tx_fd);
+                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(broadcast_addr), &response_pkt, sizeof(response_pkt), tx_fd);
             } else {
                 struct sockaddr_in dest_addr;
                 memset(&dest_addr, 0, sizeof(dest_addr));
@@ -1106,7 +1106,7 @@ void *handle_dhcp_request(void *arg) {
                 socklen_t dest_len = sizeof(dest_addr);
 
                 if (packet.ciaddr == 0) {
-                    dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                    dest_addr.sin_addr.s_addr = htonl(broadcast_addr);
                     append_ln_to_log_file("[Thread %lu] Broadcasting UDP ACK.", tid);
                 } else {
                     dest_addr.sin_addr.s_addr = req_ip;
@@ -1127,13 +1127,13 @@ void *handle_dhcp_request(void *arg) {
 
             unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
             if (use_raw) {
-                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &response_pkt, sizeof(response_pkt), tx_fd);
+                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(broadcast_addr), &response_pkt, sizeof(response_pkt), tx_fd);
             } else {
                 struct sockaddr_in dest_addr;
                 memset(&dest_addr, 0, sizeof(dest_addr));
                 dest_addr.sin_family = AF_INET;
                 dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
-                dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                dest_addr.sin_addr.s_addr = htonl(broadcast_addr);
                 socklen_t dest_len = sizeof(dest_addr);
 
                 if (sendto(s, &response_pkt, sizeof(response_pkt), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
@@ -1427,7 +1427,7 @@ void send_dhcp_raw(int raw_sock,
     memcpy(addr.sll_addr, dst_mac, 6);
 
     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-    bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(INADDR_BROADCAST));
+    bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(broadcast_addr ));
     // Add server_netmask to the log message
     append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s, Netmask %s",
              tid,
