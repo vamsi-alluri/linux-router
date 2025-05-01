@@ -1512,10 +1512,13 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
     if (entry) {
         // MAC known - send immediately
         memcpy(eth_header->dst_mac, entry->mac, 6);
-        send_raw_frame(entry->mac, ETH_P_IP, eth_frame, len, OUTBOUND);
-        append_ln_to_log_file_nat_verbose("NAT: Sent packet to known MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+        if (len > MTU + sizeof(struct ethernet_header)) send_icmp_frag(ip_header, eth_frame, INBOUND);
+        else {
+            send_raw_frame(entry->mac, ETH_P_IP, eth_frame, len, OUTBOUND);
+            append_ln_to_log_file_nat_verbose("NAT: Sent packet to known MAC: %02x:%02x:%02x:%02x:%02x:%02x",
                                 entry->mac[0], entry->mac[1], entry->mac[2],
                                 entry->mac[3], entry->mac[4], entry->mac[5]);
+        }
     } else {
         // Buffer translated packet and request MAC
         buffer_packet(eth_frame, len, wan_gateway_ip, OUTBOUND);
