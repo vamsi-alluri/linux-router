@@ -41,7 +41,7 @@ uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
 const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
-uint32_t IP_ALLOC_START_OFFSET = 1000;
+uint32_t IP_ALLOC_START_OFFSET = 2;  // set 1000 to test 0.0.0.0 ignorance feature
 
 typedef struct
 {
