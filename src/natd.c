@@ -1805,7 +1805,17 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     append_ln_to_log_file_nat_verbose(NULL);
 }
 
-void nat_main(int router_rx, int router_tx, int verbose_l) {
+void nat_main(int router_rx, int router_tx, int verbose_l, char * parent_dir) {
+
+    if (chdir(parent_dir) < 0) {
+        append_ln_to_log_file_nat("Error changing directory to  %s\n", parent_dir);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        append_ln_to_log_file_nat("Changed working directory to %s\n", cwd);
+    }
+    
+
     rx_fd = router_rx;
     tx_fd = router_tx;
     verbose = verbose_l;

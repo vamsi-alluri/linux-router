@@ -87,6 +87,7 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
     va_end(args);
 }
 
+
 int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], size_t size) {
 
     int temp_sock;  // Temporary socket for IP lookup
@@ -111,8 +112,16 @@ int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], s
     close(temp_sock);
 }
 
-void dns_main(int rx_fd, int tx_fd, int verbose_p){
+void dns_main(int rx_fd, int tx_fd, int verbose_p, char * parent_dir){
 
+    if (chdir(parent_dir) < 0) {
+        fprintf(tx_fd, "Error changing directory to %s\n", parent_dir);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        fprintf(tx_fd, "Changed directory to %s\n", cwd);
+    }
+    
     read_from_router_pipe = rx_fd;
     write_to_router_pipe = tx_fd;
     verbose_g = verbose_p;
