@@ -278,7 +278,7 @@ void print_nat_table() {
     // Print header
     const char *header = "NAT Table Entries\n";
     const char *separator = "------------------------------------------------\n";
-    const char *format = "%-15s:%-6s <-> %-15s:%-6s %s \t%s\n";
+    const char *format = "%-15s:%-6s <-> %-15s:%-6s %s\n";
     
     write(tx_fd, header, strlen(header));
     write(tx_fd, separator, strlen(separator));
