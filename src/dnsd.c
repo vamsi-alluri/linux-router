@@ -17,6 +17,7 @@
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
 #define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs"
 #define DEFAULT_DNS_LOG_FILE_NAME "dns.log"
+#define DEFAULT_DNS_LOG_PATH_FULL "/root/linux-router/bin/logs/dns.log"
 #define DEFAULT_WAN_IFACE "enp0s3"
 #define DEFAULT_LAN_IFACE "enp0s8"
 
@@ -25,6 +26,12 @@ int read_from_router_pipe, write_to_router_pipe;
 
 
 bool set_dns_log_file_path(char *path){
+
+    if (DEFAULT_DNS_LOG_PATH_FULL){
+        dns_log_file_path = DEFAULT_DNS_LOG_PATH_FULL;
+        return;
+    }
+
     // Allocate memory for the combined path
     dns_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_DNS_LOG_FILE_NAME) + 1);
     if (dns_log_file_path) {

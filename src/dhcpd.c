@@ -26,7 +26,8 @@
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
 #define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
-#define DEFAULT_DHCP_LOG_PATH "/tmp/linux-router/logs"     // Changed by argument.
+#define DEFAULT_DHCP_LOG_PATH "/tmp/linux-router/logs"                  // Changed by argument.
+#define DEFAULT_DHCP_LOG_PATH_FULL "/tmp/linux-router/logs/dhcp.log"
 #define DEFAULT_DHCP_LOG_FILE_NAME "dhcp.log"
 
 // Global variables for DHCP server
@@ -79,7 +80,11 @@ void send_dhcp_raw(int raw_sock,
                   int tx_fd __attribute__((unused))); 
 void append_ln_to_log_file(const char *msg, ...);
 
-bool set_dhcp_log_file_path(char *path){
+bool set_dhcp_log_file_path(char *path){    
+    if (DEFAULT_DHCP_LOG_PATH_FULL){
+        dhcp_log_file_path = DEFAULT_DHCP_LOG_PATH_FULL;
+        return;
+    }
     // Allocate memory for the combined path
     dhcp_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_DHCP_LOG_FILE_NAME) + 1);
     if (dhcp_log_file_path) {

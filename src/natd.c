@@ -32,6 +32,7 @@
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
 #define DEFAULT_NAT_LOG_PATH "/tmp/linux-router/logs/"
 #define DEFAULT_NAT_LOG_FILE_NAME "nat.log"
+#define DEFAULT_NAT_LOG_PATH_FULL "/tmp/linux-router/logs/nat.log"
 
 #define TCP_IP_TYPE 6
 #define UDP_IP_TYPE 17
@@ -936,6 +937,12 @@ void get_machine_ip(const char *iface, char *gateway_ip, size_t size) {
 /// LOGGING:
 
 bool set_nat_log_file_path(char *path){
+    
+    if (DEFAULT_NAT_LOG_PATH_FULL){
+        nat_log_file_path = DEFAULT_NAT_LOG_PATH_FULL;
+        return;
+    }
+
     write(tx_fd, path, strlen(path));
     // Allocate memory for the combined path
     nat_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_NAT_LOG_FILE_NAME) + 1);

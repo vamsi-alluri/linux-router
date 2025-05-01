@@ -18,6 +18,7 @@
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
 #define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/"
+#define DEFAULT_NTP_LOG_PATH_FULL "/root/linux-router/bin/logs/ntp.log"
 #define DEFAULT_NTP_LOG_FILE_NAME "ntp.log"
 #define DEFAULT_WAN_IFACE "enp0s3"
 #define DEFAULT_LAN_IFACE "enp0s8"
@@ -25,6 +26,11 @@
 static char *ntp_log_file_path;
 
 bool set_ntp_log_file_path(char *path){
+    if (DEFAULT_NTP_LOG_PATH_FULL){
+        ntp_log_file_path = DEFAULT_NTP_LOG_PATH_FULL;
+        return;
+    }
+
     // Allocate memory for the combined path
     ntp_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_NTP_LOG_FILE_NAME) + 1);
     if (ntp_log_file_path) {
