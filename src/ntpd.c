@@ -14,7 +14,7 @@
 #define NTP_TIMESTAMP_DELTA 2208988800ul  // Difference between UNIX and NTP start time
 #define NTPD_PORT 123                     // Well-known port
 #define REFRESH_PORT 32432                // Arbitrary unused port & ignored by NAT
-#define DEFAULT_REFRESH 14400             // 4 hours in seconds
+#define DEFAULT_REFRESH 300               // 5 minutes in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
 #define DEFAULT_NTP_LOG_PATH "/tmp/linux-router/logs/"
