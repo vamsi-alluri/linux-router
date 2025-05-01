@@ -1428,15 +1428,21 @@ void send_dhcp_raw(int raw_sock,
 
     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(broadcast_addr ));
+    // Use temporary buffers for logging IP addresses 
+    char dst_ip_str[INET_ADDRSTRLEN];
+    char mask_str[INET_ADDRSTRLEN];
+    strncpy(dst_ip_str, inet_ntoa(*(struct in_addr *)&dst_ip), INET_ADDRSTRLEN);
+    strncpy(mask_str, inet_ntoa(*(struct in_addr *)&server_netmask), INET_ADDRSTRLEN);
+
+
     // Add server_netmask to the log message
     append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s, Netmask %s",
              tid,
              is_broadcast ? "broadcast" : "unicast",
              sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
              dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
-             inet_ntoa(*(struct in_addr *)&dst_ip),
-             inet_ntoa(*(struct in_addr *)&server_netmask)); // Log the server's netmask
-
+             dst_ip_str, // Use buffer
+             mask_str); // Use buffer
     ssize_t sent = sendto(raw_sock, buf, sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
           0, (struct sockaddr *)&addr, sizeof(addr));
     
