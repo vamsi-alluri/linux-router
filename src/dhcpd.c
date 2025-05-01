@@ -26,6 +26,8 @@
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
 #define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
+#define DEFAULT_DHCP_LOG_PATH "/tmp/linux-router/logs"     // Changed by argument.
+#define DEFAULT_DHCP_LOG_FILE_NAME "dhcp.log"
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
@@ -40,7 +42,7 @@ uint32_t server_netmask = 0; // Server Netmask
 uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
-const char *log_file_path = "/home/osboxes/cs536/router/logs/dhcp_log.txt"; // Log file path
+char *dhcp_log_file_path;
 
 typedef struct
 {
@@ -77,22 +79,37 @@ void send_dhcp_raw(int raw_sock,
                   int tx_fd __attribute__((unused))); 
 void append_ln_to_log_file(const char *msg, ...);
 
+bool set_dhcp_log_file_path(char *path){
+    // Allocate memory for the combined path
+    dhcp_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_DHCP_LOG_FILE_NAME) + 1);
+    if (dhcp_log_file_path) {
+        strcpy(dhcp_log_file_path, path);
+        // Ensure path ends with a directory separator
+        if (path[strlen(path) - 1] != '/') {
+            strcat(dhcp_log_file_path, "/");
+        }
+        strcat(dhcp_log_file_path, DEFAULT_DHCP_LOG_FILE_NAME);
+        return true;
+    }
+    return false;
+}
+
 // Logging function implementation
 void append_ln_to_log_file(const char *msg, ...) {
     va_list argp;
 
-    FILE *log_file = fopen(log_file_path, "r");
+    FILE *log_file = fopen(dhcp_log_file_path, "r");
     if (log_file) {
         fseek(log_file, 0, SEEK_END);
         long file_size = ftell(log_file);
         fclose(log_file);
 
         if (file_size > 10 * 1024 * 1024) { // 10 MB
-            log_file = fopen(log_file_path, "w");
+            log_file = fopen(dhcp_log_file_path, "w");
             if (log_file) {
                 fprintf(log_file, "\n\n");
                 fclose(log_file);
-                log_file = fopen(log_file_path, "a");
+                log_file = fopen(dhcp_log_file_path, "a");
                 if (log_file) {
                     time_t now_clear = time(NULL);
                     struct tm *tm_info_clear = localtime(&now_clear);
@@ -106,7 +123,7 @@ void append_ln_to_log_file(const char *msg, ...) {
     }
 
     if (msg == NULL || strcmp(msg, "") == 0) {
-        log_file = fopen(log_file_path, "a");
+        log_file = fopen(dhcp_log_file_path, "a");
         if (log_file) {
             fprintf(log_file, "\n");
             fclose(log_file);
@@ -118,7 +135,7 @@ void append_ln_to_log_file(const char *msg, ...) {
     struct tm *tm_info = localtime(&now);
     char buffer[26];
     strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", tm_info);
-    log_file = fopen(log_file_path, "a");
+    log_file = fopen(dhcp_log_file_path, "a");
     if (log_file) {
         va_start(argp, msg);
         fprintf(log_file, "[%s] ", buffer);
@@ -127,22 +144,27 @@ void append_ln_to_log_file(const char *msg, ...) {
         va_end(argp);
         fclose(log_file);
     } else {
-        fprintf(stderr, "DHCPD: Error opening log file %s: %s\n", log_file_path, strerror(errno));
+        fprintf(stderr, "DHCPD: Error opening log file %s: %s\n", dhcp_log_file_path, strerror(errno));
     }
 }
 
 
 // Main DHCP service function that communicates with router
-void dhcp_main(int rx_fd, int tx_fd) {
-
+void dhcp_main(int rx_fd, int tx_fd, int verbose, char * dhcp_log_file_path_arg) {
 
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
 
+    if ((chdir(dhcp_log_file_path_arg) > 0) && set_dhcp_log_file_path(dhcp_log_file_path_arg)) {
+        append_ln_to_log_file("Updated log file path.");
+    }
+    else
+        set_dhcp_log_file_path(DEFAULT_DHCP_LOG_PATH);
+
     char buffer[256];
     ssize_t count;
 
-    FILE *log_init = fopen(log_file_path, "a");
+    FILE *log_init = fopen(dhcp_log_file_path, "a");
     if (log_init) {
         fprintf(log_init, "\n[%s] DHCP Service Starting...\n", __TIMESTAMP__);
         fclose(log_init);

@@ -30,7 +30,8 @@
 #define DEFAULT_LAN_IFACE "enp0s8"      // Configurable by command.
 #define DEFAULT_WAN_IFACE "enp0s3"      // Configurable by command.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_LOG_PATH "/tmp/linux-router/logs/nat.log"
+#define DEFAULT_NAT_LOG_PATH "/tmp/linux-router/logs/"
+#define DEFAULT_NAT_LOG_FILE_NAME "nat.log"
 
 #define TCP_IP_TYPE 6
 #define UDP_IP_TYPE 17
@@ -81,7 +82,7 @@ const reserved_ports_for_inbound port_list[] = {
 
 // Global variables:
 static int lan_raw, wan_raw, rx_fd, tx_fd;
-static char *log_file_path = DEFAULT_LOG_PATH;
+static char *nat_log_file_path;
 static uint8_t wan_machine_mac[6], lan_machine_mac[6];
 static uint32_t wan_machine_ip, lan_machine_ip, wan_gateway_ip;
 static char wan_machine_ip_str[INET_ADDRSTRLEN];
@@ -934,6 +935,22 @@ void get_machine_ip(const char *iface, char *gateway_ip, size_t size) {
 
 /// LOGGING:
 
+bool set_nat_log_file_path(char *path){
+    write(tx_fd, path, strlen(path));
+    // Allocate memory for the combined path
+    nat_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_NAT_LOG_FILE_NAME) + 1);
+    if (nat_log_file_path) {
+        strcpy(nat_log_file_path, path);
+        // Ensure path ends with a directory separator
+        if (path[strlen(path) - 1] != '/') {
+            strcat(nat_log_file_path, "/");
+        }
+        strcat(nat_log_file_path, DEFAULT_NAT_LOG_FILE_NAME);
+        return true;
+    }
+    return false;
+}
+
 // Sends binary content to router.
 void send_to_router(unsigned char *msg, int msg_len) {
     write(tx_fd, msg, msg_len);
@@ -945,7 +962,7 @@ char* time_to_fstr(time_t _time, char buffer[26]){
 }
 
 static void clear_log_file() {
-    FILE *log_file = fopen(log_file_path, "w");
+    FILE *log_file = fopen(nat_log_file_path, "w");
     if (log_file) {
         fprintf(log_file, "\n\n");
         fclose(log_file);
@@ -958,7 +975,7 @@ static void vappend_ln_to_log_file_nat(const char *msg, va_list args) {
     // Clean up the log file if the size is more than 10 MB.
     va_list argp;  
 
-    FILE *log_file = fopen(log_file_path, "r");
+    FILE *log_file = fopen(nat_log_file_path, "r");
     if (log_file) {
         fseek(log_file, 0, SEEK_END);
         long file_size = ftell(log_file);
@@ -971,7 +988,7 @@ static void vappend_ln_to_log_file_nat(const char *msg, va_list args) {
     }
 
     if (msg == NULL || strcmp("", msg) == 0){
-        log_file = fopen(log_file_path, "a");
+        log_file = fopen(nat_log_file_path, "a");
         if (log_file) {
             fprintf(log_file, "\n");
             fclose(log_file);
@@ -983,7 +1000,7 @@ static void vappend_ln_to_log_file_nat(const char *msg, va_list args) {
     char buffer[26];
     strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", localtime(&now));
     
-    log_file = fopen(log_file_path, "a");
+    log_file = fopen(nat_log_file_path, "a");
     if (log_file) {
         fprintf(log_file, "[%s] ", buffer);
         vfprintf(log_file, msg, args);
@@ -1805,17 +1822,8 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
     append_ln_to_log_file_nat_verbose(NULL);
 }
 
-void nat_main(int router_rx, int router_tx, int verbose_l, char * parent_dir) {
-
-    if (chdir(parent_dir) < 0) {
-        append_ln_to_log_file_nat("Error changing directory to  %s\n", parent_dir);
-    } else {
-        char cwd[256];
-        getcwd(cwd, 256);
-        append_ln_to_log_file_nat("Changed working directory to %s\n", cwd);
-    }
+void nat_main(int router_rx, int router_tx, int verbose_l, char * nat_log_file_path_arg) {
     
-
     rx_fd = router_rx;
     tx_fd = router_tx;
     verbose = verbose_l;
@@ -1826,6 +1834,12 @@ void nat_main(int router_rx, int router_tx, int verbose_l, char * parent_dir) {
     // Send the PID to router process for "killing" purposes.
     pid_t pid = getpid();
     send_to_router(&pid, sizeof(pid_t));
+    
+    if (set_nat_log_file_path(nat_log_file_path_arg)) {
+        append_ln_to_log_file("Updated log file path.");
+    }
+    else
+        set_nat_log_file_path(DEFAULT_NAT_LOG_PATH);
     
     append_ln_to_log_file_nat_verbose("NAT service started.");
 

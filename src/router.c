@@ -31,7 +31,7 @@ char *progname;
 const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "nat", "dns", "ntp"};
 volatile sig_atomic_t shutdown_requested_flag = 0;
 
-char cwd[256];
+char cwd[256], log_directory[256];
 
 typedef struct {
     pid_t pid;
@@ -137,8 +137,8 @@ void start_service(service_t *svc, char *argv[]) {
         // Notify router we're ready
         // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
-        // Start service must be run after cwd is initialized!
-        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose, cwd);
+        // Start service must be run after log_directory is initialized!
+        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose, log_directory);
         
         
         close(svc->router_to_svc[0]); // Close pipes before exit
@@ -501,6 +501,10 @@ int main(int argc, char *argv[]) {
         return (EXIT_FAILURE);           // If it reaches this point it should be a failure    
     }
     fprintf(stderr, "Current Working Directory: %s\n", cwd);
+
+    mkdir("/logs", 0777);
+    chdir("/logs");
+    getcwd(log_directory, 256);
 
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {

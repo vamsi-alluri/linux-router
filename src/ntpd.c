@@ -17,11 +17,27 @@
 #define DEFAULT_REFRESH 14400             // 4 hours in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
-#define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
+#define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/"
+#define DEFAULT_NTP_LOG_FILE_NAME "ntp.log"
 #define DEFAULT_WAN_IFACE "enp0s3"
 #define DEFAULT_LAN_IFACE "enp0s8"
 
-static char *ntp_log_file_path = DEFAULT_NTP_LOG_PATH;
+static char *ntp_log_file_path;
+
+bool set_ntp_log_file_path(char *path){
+    // Allocate memory for the combined path
+    ntp_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_NTP_LOG_FILE_NAME) + 1);
+    if (ntp_log_file_path) {
+        strcpy(ntp_log_file_path, path);
+        // Ensure path ends with a directory separator
+        if (path[strlen(path) - 1] != '/') {
+            strcat(ntp_log_file_path, "/");
+        }
+        strcat(ntp_log_file_path, DEFAULT_NTP_LOG_FILE_NAME);
+        return true;
+    }
+    return false;
+}
 
 static void clear_log_file_ntp() {
     FILE *log_file = fopen(ntp_log_file_path, "w");
@@ -90,19 +106,17 @@ void append_ln_to_log_file_ntp_verbose(const char *msg, ...) {
 
 unsigned char server_hostname[255];
 
-void ntp_main(int rx_fd, int tx_fd, int verbose_p, char * parent_dir)
+void ntp_main(int rx_fd, int tx_fd, int verbose_p, char * ntp_log_file_path_arg)
 {
     // Send the PID back to the parent for processing
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process.
 
-    if (chdir(parent_dir) < 0) {
-        write(tx_fd, "Error changing directory.\n", 26);
-    } else {
-        char cwd[256];
-        getcwd(cwd, 256);
-        write(tx_fd, cwd, 256);
+    if ((chdir(ntp_log_file_path_arg) > 0) && set_ntp_log_file_path(ntp_log_file_path_arg)) {
+        append_ln_to_log_file("Updated log file path.");
     }
+    else
+        set_ntp_log_file_path(DEFAULT_NTP_LOG_PATH);
 
     memset(&server_hostname, 0, sizeof(server_hostname));
     strncpy(server_hostname, DEFAULT_SERVER, sizeof(DEFAULT_SERVER) - 1);
