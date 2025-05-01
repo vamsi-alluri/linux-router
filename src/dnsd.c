@@ -15,12 +15,36 @@
 #define BUFFER_SIZE 500
 #define CLEANUP_INTERVAL 600     // Once every 5 min.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
-#define DEFAULT_DNS_LOG_PATH "/root/linux-router/bin/logs/dns.log"
+#define DEFAULT_DNS_LOG_PATH "/tmp/linux-router/logs/"
+#define DEFAULT_DNS_LOG_FILE_NAME "dns.log"
+#define DEFAULT_DNS_LOG_PATH_FULL "/tmp/linux-router/logs/dns.log"
 #define DEFAULT_WAN_IFACE "enp0s3"
 #define DEFAULT_LAN_IFACE "enp0s8"
 
-static char *dns_log_file_path = DEFAULT_DNS_LOG_PATH;
+static char *dns_log_file_path;
 int read_from_router_pipe, write_to_router_pipe;
+
+
+bool set_dns_log_file_path(char *path){
+
+    if (DEFAULT_DNS_LOG_PATH_FULL){
+        dns_log_file_path = DEFAULT_DNS_LOG_PATH_FULL;
+        return;
+    }
+
+    // Allocate memory for the combined path
+    dns_log_file_path = malloc(strlen(path) + 1 + strlen(DEFAULT_DNS_LOG_FILE_NAME) + 1);
+    if (dns_log_file_path) {
+        strcpy(dns_log_file_path, path);
+        // Ensure path ends with a directory separator
+        if (path[strlen(path) - 1] != '/') {
+            strcat(dns_log_file_path, "/");
+        }
+        strcat(dns_log_file_path, DEFAULT_DNS_LOG_FILE_NAME);
+        return true;
+    }
+    return false;
+}
 
 static void clear_log_file_dns() {
     FILE *log_file = fopen(dns_log_file_path, "w");
@@ -87,6 +111,7 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
     va_end(args);
 }
 
+
 int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], size_t size) {
 
     int temp_sock;  // Temporary socket for IP lookup
@@ -111,7 +136,7 @@ int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], s
     close(temp_sock);
 }
 
-void dns_main(int rx_fd, int tx_fd, int verbose_p){
+void dns_main(int rx_fd, int tx_fd, int verbose_p, char * dns_log_file_path_arg){
 
     read_from_router_pipe = rx_fd;
     write_to_router_pipe = tx_fd;
@@ -120,6 +145,12 @@ void dns_main(int rx_fd, int tx_fd, int verbose_p){
     // Send the PID back to the parent for processing
     pid_t pid = getpid();
     write(write_to_router_pipe, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
+
+    if (set_dns_log_file_path(dns_log_file_path_arg)) {
+        append_ln_to_log_file("Updated log file path.");
+    }
+    else
+        set_dns_log_file_path(DEFAULT_DNS_LOG_PATH);
     
     append_ln_to_log_file_dns_verbose("DNS service started.");
     memset(domain_table, 0, MAX_ENTRIES * sizeof(dns_bucket *));   // Clear domain_table
