@@ -91,6 +91,21 @@ void setup_config() {
     reserved_ips[2].end = 3232301055;
 
     while (1) {
+        printf("Do you want to configure the network interface? (Y/N)\n");
+        
+        if (get_input(input_buffer, 256) == NULL) {
+            printf("There was something wrong with the input.\n");
+            continue;
+        }
+
+        if (strcmp(input_buffer, "Y") == 0) {
+            break;
+        } else if (strcmp(input_buffer, "N") == 0){
+            return;
+        }
+    }
+
+    while (1) {
         
         printf("Choose your interface:\n");
         if (get_input(input_buffer, 256) == NULL) {

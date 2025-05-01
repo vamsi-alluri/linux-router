@@ -41,6 +41,7 @@ uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
 const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
+uint32_t IP_ALLOC_START_OFFSET = 1;
 
 typedef struct
 {
@@ -604,7 +605,7 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
             }
             // If it was conflicted but now okay to retry, clear the conflict time *before* assigning
             if (conflict_ok_to_retry) {
-                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + 100))}; // Assuming old IP scheme for logging
+                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + IP_ALLOC_START_OFFSET))}; // Assuming old IP scheme for logging
                  append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr));
                  leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
             }
@@ -624,7 +625,7 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
         // Assign IP using the dynamic network_addr and the slot index offset
         // Convert network_addr to host byte order for calculation, then back to network byte order
         uint32_t base_ip_h = ntohl(network_addr);
-        uint32_t assigned_ip_h = base_ip_h + i + 100; // Add offset (adjust 100 if needed)
+        uint32_t assigned_ip_h = base_ip_h + i + IP_ALLOC_START_OFFSET; // Add offset (adjust 100 if needed)
 
         // Basic check: Ensure assigned IP is within the subnet and not the network/broadcast/server IP
         uint32_t current_broadcast_addr_h = ntohl(broadcast_addr);
@@ -820,7 +821,7 @@ void mark_ip_conflicted(uint32_t conflicted_ip) {
      pthread_mutex_lock(&lease_mutex);
      for (int i = 0; i < MAX_LEASES; i++) {
          // Find the lease slot corresponding to the IP
-         if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + 100)) == conflicted_ip) {
+         if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + IP_ALLOC_START_OFFSET)) == conflicted_ip) {
               leases[i].active = 0; // Mark inactive
               leases[i].conflict_detected_time = now;
               // Clear other fields to make the slot fully available after delay
