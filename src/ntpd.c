@@ -18,6 +18,8 @@
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
 #define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/ntp.log"
+#define DEFAULT_WAN_IFACE "enp0s3"
+#define DEFAULT_LAN_IFACE "enp0s8"
 
 static char *ntp_log_file_path = DEFAULT_NTP_LOG_PATH;
 
@@ -26,7 +28,7 @@ static void clear_log_file_ntp() {
     if (log_file) {
         fprintf(log_file, "\n\n");
         fclose(log_file);
-        append_ln_to_log_file_ntp("Log file cleared.");
+        append_ln_to_log_file_ntp_verbose("Log file cleared.");
     }
 }
 
@@ -78,25 +80,25 @@ void append_ln_to_log_file_ntp(const char *msg, ...) {
 }
 
 void append_ln_to_log_file_ntp_verbose(const char *msg, ...) {
-    // if (verbose != 1) return;
+    if (verbose_g != 1) return;
 
-    // va_list args;
-    // va_start(args, msg);
-    // vappend_ln_to_log_file_ntp(msg, args);
-    // va_end(args);
+    va_list args;
+    va_start(args, msg);
+    vappend_ln_to_log_file_ntp(msg, args);
+    va_end(args);
 }
 
 unsigned char server_hostname[255];
 
-void ntp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir)
+void ntp_main(int rx_fd, int tx_fd, int verbose_p, char * parent_dir)
 {
 
     if (chdir(parent_dir) < 0) {
-        append_ln_to_log_file_ntp("Error changing directory to  %s\n", parent_dir);
+        fprintf(tx_fd, "Error changing directory to %s\n", parent_dir);
     } else {
         char cwd[256];
         getcwd(cwd, 256);
-        append_ln_to_log_file_ntp("Changed working directory to %s\n", cwd);
+        fprintf(tx_fd, "Changed directory to %s\n", cwd);
     }
 
     // Send the PID back to the parent for processing
@@ -115,31 +117,31 @@ void ntp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir)
 
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
     {
-        append_ln_to_log_file_ntp("socket");
+        append_ln_to_log_file_ntp_verbose("socket");
         return;
     }
 
     struct ifreq myreq;
     memset(&myreq, 0, sizeof(myreq));
-    strncpy(myreq.ifr_name, "enp0s8", IFNAMSIZ);
+    strncpy(myreq.ifr_name, DEFAULT_LAN_IFACE, IFNAMSIZ);
 
     if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, (void *)&myreq, sizeof(myreq)) < 0)
     {
-        append_ln_to_log_file_ntp("setsockopt");
+        append_ln_to_log_file_ntp_verbose("setsockopt");
         close(s);
         return;
     }
 
-    if (flags = fcntl(s, F_GETFL) < 0)
+    if ((flags = fcntl(s, F_GETFL)) < 0)
     {
-        append_ln_to_log_file_ntp("F_GETFL");
+        append_ln_to_log_file_ntp_verbose("F_GETFL");
         close(s);
         return;
     }
     flags |= O_NONBLOCK;
     if (fcntl(s, F_SETFL, flags) < 0)
     {
-        append_ln_to_log_file_ntp("F_SETFL");
+        append_ln_to_log_file_ntp_verbose("F_SETFL");
         close(s);
         return;
     }
@@ -151,13 +153,13 @@ void ntp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir)
 
     if (bind(s, (struct sockaddr *)&ser_addr, sizeof(ser_addr)) < 0)
     {
-        append_ln_to_log_file_ntp("bind");
+        append_ln_to_log_file_ntp_verbose("bind");
         close(s);
         return;
     }
 
     // system("clear");
-    append_ln_to_log_file_ntp("...This is NTP server (Non-Blocking Version) listening on port %d...\n\n", NTPD_PORT);
+    append_ln_to_log_file_ntp_verbose("...This is NTP server (Non-Blocking Version) listening on port %d...\n\n", NTPD_PORT);
 
     struct timeval tv = {5, 0}; // 5 seconds, 0 microseconds
     fd_set rfds;
@@ -187,30 +189,11 @@ void ntp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir)
         // For reading & processing commands from router
         if (FD_ISSET(rx_fd, &rfds))
         {
-            append_ln_to_log_file_ntp("I see something on rx_fd");
             char buffer[256];
             ssize_t count;
 
-            // char command[256];
-            // int pos = 0;
-
             if ((count = read(rx_fd, buffer, sizeof(buffer))) > 0)
             {
-                append_ln_to_log_file_ntp("I read something on rx_fd");
-                append_ln_to_log_file_ntp("count is %d, buffer is %s", count, buffer);
-                // for (int i = 0; i < count; i++)
-                // {
-                //     if (buffer[i] == '\n')
-                //     {
-                //         command[pos] = '\0';
-                //         handle_ntp_command(rx_fd, tx_fd, command);
-                //         pos = 0;
-                //     }
-                //     else
-                //     {
-                //         command[pos++] = buffer[i];
-                //     }
-                // }
                 buffer[count - 1] = '\0';
                 handle_ntp_command(rx_fd, tx_fd, buffer);
             }
@@ -227,25 +210,25 @@ void ntp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir)
             if ((recv_len = recvfrom(s, &in_packet, sizeof(in_packet), 0,
                                      (struct sockaddr *)&cli_addr, &slen)) < 0)
             {
-                append_ln_to_log_file_ntp("recvfrom");
+                append_ln_to_log_file_ntp_verbose("recvfrom");
                 continue;
             }
 
-            append_ln_to_log_file_ntp("Received packet from %s, port number:%d\n",
+            append_ln_to_log_file_ntp_verbose("Received packet from %s, port number:%d\n",
                    inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
 
             // if (in_packet.mode != 3)
             // Had to change from bit fields
             if ((in_packet.li_vn_mode & 0b00000111) != 3)
             {
-                append_ln_to_log_file_ntp("ignore non client ntp request");
+                append_ln_to_log_file_ntp_verbose("ignore non client ntp request");
                 continue;
             }
             // if (in_packet.vn != 4)
             // Had to change from bit fields
             if ((in_packet.li_vn_mode & 0b00111000) != 4)
             {
-                append_ln_to_log_file_ntp("version number of request not 4, but still reply");
+                append_ln_to_log_file_ntp_verbose("version number of request not 4, but still reply");
             }
 
             // Contruct reply
@@ -263,11 +246,11 @@ void ntp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir)
             if ((send_len = sendto(s, &out_packet, sizeof(out_packet), 0,
                                    (struct sockaddr *)&cli_addr, slen)) < 0)
             {
-                append_ln_to_log_file_ntp("sendto");
+                append_ln_to_log_file_ntp_verbose("sendto");
                 continue;
             }
 
-            append_ln_to_log_file_ntp("Sent packet to %s, port number:%d\n",
+            append_ln_to_log_file_ntp_verbose("Sent packet to %s, port number:%d\n",
                    inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port));
         }
     }
@@ -292,7 +275,7 @@ time_t refresh_time()
     int sock = socket(PF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
-        append_ln_to_log_file_ntp("cannot create socket\n");
+        append_ln_to_log_file_ntp_verbose("cannot create socket\n");
         return time(NULL);
     }
 
@@ -304,7 +287,8 @@ time_t refresh_time()
 
     // Bind socket to a unsurveiled port by NAT
     if (bind(sock, (struct sockaddr *)&local_saddr, sizeof(local_saddr)) < 0) {
-        append_ln_to_log_file_ntp("cannot bind refresh\n");
+        append_ln_to_log_file_ntp_verbose("cannot bind refresh\n");
+        close(sock);
         return time(NULL);
     }
 
@@ -316,40 +300,50 @@ time_t refresh_time()
     struct hostent *hostinfo = gethostbyname(server_hostname);
     if (hostinfo == 0)
     {
-        append_ln_to_log_file_ntp("%s is invalid host\n", server_hostname);
+        append_ln_to_log_file_ntp_verbose("%s is invalid host\n", server_hostname);
+        close(sock);
         return time(NULL);
     }
     saddr.sin_addr.s_addr = *((unsigned int *)(hostinfo->h_addr_list[0]));
     if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
     {
-        append_ln_to_log_file_ntp("cannot connect refresh\n");
+        append_ln_to_log_file_ntp_verbose("cannot connect refresh\n");
+        close(sock);
         return time(NULL);
     }
 
-    append_ln_to_log_file_ntp("Sending refresh to host %s, port number:%d\n",
+    // Set a receive timeout so recv doesn't stall
+    struct timeval utv;
+    utv.tv_sec = 3;  // 3 seconds
+    utv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&utv, sizeof(utv));
+
+    append_ln_to_log_file_ntp_verbose("Sending refresh to host %s, port number:%d\n",
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
     // Sends the request to the server. (Use send() instead of sendto())
     if (send(sock, &refresh_packet, sizeof(ntp_packet), 0) < 0)
     {
-        append_ln_to_log_file_ntp("send refresh\n");
+        append_ln_to_log_file_ntp_verbose("send refresh\n");
+        close(sock);
         return time(NULL);
     }
 
     int reply_length = recv(sock, &refresh_packet, sizeof(ntp_packet), 0);
     if (reply_length != sizeof(ntp_packet))
     {
-        append_ln_to_log_file_ntp("recv refresh\n");
+        append_ln_to_log_file_ntp_verbose("recv refresh\n");
+        close(sock);
         return time(NULL);
     }
 
-    append_ln_to_log_file_ntp("Received refresh from host %s, port number:%d\n",
+    append_ln_to_log_file_ntp_verbose("Received refresh from host %s, port number:%d\n",
            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
 
     // Extract time from packet and update local time
     unsigned long newTimeSec = ntohl(refresh_packet.xmtSec) - NTP_TIMESTAMP_DELTA;
 
-    append_ln_to_log_file_ntp("Server time: %ld (Unix seconds)\n", newTimeSec);
+    append_ln_to_log_file_ntp_verbose("Server time: %ld (Unix seconds)\n", newTimeSec);
 
     // Set local time to retrieved time
     struct timeval tv;
@@ -358,19 +352,19 @@ time_t refresh_time()
 
     if (settimeofday(&tv, NULL) < 0)
     {
-        append_ln_to_log_file_ntp("settimeofday\n");
+        append_ln_to_log_file_ntp_verbose("settimeofday\n");
+        close(sock);
         return time(NULL);
     }
+    close(sock); // Made sure to close so we can use again
     return time(NULL);
 }
 
 void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
 {
-    append_ln_to_log_file_ntp("I try to handle something on rx_fd");
     // Handle each command and write reply to tx_fd
     if (strcmp(command, "shutdown") == 0)
     {
-        append_ln_to_log_file_ntp("I am shutting down");
         // Clean shutdown on EOF or explicit command
         write(tx_fd, "NTP: Acknowledged shutdown command.\n", 36);
         close(rx_fd); // Close pipes before exit

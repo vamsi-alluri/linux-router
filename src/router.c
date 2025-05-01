@@ -12,6 +12,10 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
 
 // Service headers
 #include "dhcpd.h"
@@ -44,8 +48,257 @@ typedef struct {
     char command[256];
 } router_command;
 
+// Input Character Buffer for Setup Wizard
+char input_buffer[256];
+
+// Interval of unsigned longs that represent a range of reserved IPs.
+struct interval {
+    unsigned long start;
+    unsigned long end;
+};
+
+
 void print_verboseln(char *message, ...);
 void print_running_services(service_t *services);
+// Checks if the unsigned long IP resides in the IPs reserved for private networks
+int is_ip_valid(unsigned long ip, struct interval intervals[], int interval_size);
+// Checks if the IP address and subnet mask is valid
+int is_ip_combo_valid(unsigned long input_ip, unsigned long input_mask);
+// Gets the input of the buffer
+char * get_input(char * buf, int max_size);
+bool is_service_running(service_t *svc);
+
+
+/* ================= Setup Wizard ================= */
+// Function that configures the interface based on the subnet mask and ip address
+void setup_config() {
+    // List of reserved IPs
+    struct interval reserved_ips[6];
+    // Class A
+    // 10.0.0.0
+    reserved_ips[0].start = 167772160;
+    // 10.255.255.255
+    reserved_ips[0].end = 184549375;
+
+    // Class B
+    // 172.16.0.0
+    reserved_ips[1].start = 2886729728;
+    // 172.31.255.255
+    reserved_ips[1].end = 2887778303;
+
+    //Class C
+    //192.168.0.0
+    reserved_ips[2].start = 3232235520;
+    //192.168.255.255
+    reserved_ips[2].end = 3232301055;
+
+    while (1) {
+        printf("Do you want to configure the network interface? (Y/N)\n");
+        
+        if (get_input(input_buffer, 256) == NULL) {
+            printf("There was something wrong with the input.\n");
+            continue;
+        }
+
+        if (strcmp(input_buffer, "Y") == 0) {
+            break;
+        } else if (strcmp(input_buffer, "N") == 0){
+            return;
+        }
+    }
+
+    while (1) {
+        
+        printf("Choose your interface:\n");
+        if (get_input(input_buffer, 256) == NULL) {
+            printf("You typed too much or reached EOF.\n");
+            continue;
+        }
+        struct ifaddrs *if_iter, *if_head;
+
+        if (getifaddrs(&if_head) < 0) {
+            perror("getifaddrs");
+            break;
+        }
+
+        int found = 0;
+        // Iterate through ifaddrs to find the correct interface
+        for (if_iter = if_head; if_iter != NULL; if_iter = if_iter->ifa_next) {
+            if (if_iter->ifa_name != NULL) {
+                if (strcmp(if_iter->ifa_name, input_buffer) == 0) {
+                    printf("Found interface with name %s\n", if_iter->ifa_name);
+                    found = 1;
+                    break;
+                }
+            }
+        }
+
+        if (found == 0) {
+            printf("Didn't find interface with name %s\n", input_buffer);
+            continue;
+        }
+
+        // Socket creation for host ip
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0) {
+            perror("socket");
+            break;
+        }
+
+        // ifreq for changing the flag, ip, and mask respectively
+        struct ifreq ifr_flag;
+        struct ifreq ifr_ip;
+        struct ifreq ifr_mask;
+
+        // Copy the ifr name 
+        strncpy(ifr_ip.ifr_name, if_iter->ifa_name, IF_NAMESIZE - 1);
+        strncpy(ifr_mask.ifr_name, if_iter->ifa_name, IF_NAMESIZE - 1);
+        strncpy(ifr_flag.ifr_name, if_iter->ifa_name, IF_NAMESIZE - 1);
+
+        // Put null terminators at the end of the interface name
+        ifr_ip.ifr_name[IF_NAMESIZE - 1] = '\0';
+        ifr_mask.ifr_name[IF_NAMESIZE - 1] = '\0';
+        ifr_flag.ifr_name[IF_NAMESIZE - 1] = '\0';
+
+        printf("Enter a valid IP address:\n");
+        struct sockaddr_in * socket_addr = (struct sockaddr_in *)&ifr_ip.ifr_addr;
+        unsigned long input_ip;
+        socket_addr->sin_family = AF_INET;
+
+        if (get_input(input_buffer, 256) == NULL) {
+            printf("You typed too much or reached EOF.\n");
+            continue;
+        }        
+
+        // Check if the ip is valid syntactically
+        if (inet_aton(input_buffer, &socket_addr->sin_addr) > 0) {
+            input_ip = ntohl(socket_addr->sin_addr.s_addr);
+            int collision_index = -1;
+            // Check if the ip is in the reserved private network ranges
+            if (collision_index = is_ip_valid(input_ip, reserved_ips, 3) > -1) {
+                printf("Host IP is valid!\n");
+                
+            } else {
+                printf("Host IP is not in the range for private networks!\n", input_ip);
+                continue;
+            }
+        } else {
+            printf("Invalid IP address entered!\n");
+            continue;
+        }
+        
+        printf("Enter a valid subnet mask:\n");
+        socket_addr = (struct sockaddr_in *)&ifr_mask.ifr_netmask;
+        unsigned long input_mask;
+
+        socket_addr->sin_family = AF_INET;
+        if (get_input(input_buffer, 256) == NULL) {
+            printf("You typed too much or reached EOF.\n");
+            continue;
+        }
+
+        // Check if the subnet is syntactically correct
+        if (inet_aton(input_buffer, &socket_addr->sin_addr) > 0) {
+            input_mask = ntohl(socket_addr->sin_addr.s_addr);
+            unsigned long check_long = input_mask;
+            int found_one = 0;
+            int fail = 0;
+            // Check the bits of the subnet mask to see if it is a valid subnet mask.
+            for (int i = 0; i < 32; i++) {
+                int bit = check_long & 0b1;
+                if (bit == 1) {
+                    found_one = 1;
+                } else {
+                    if (found_one == 1) {
+                        printf("Invalid Subnet Mask!\n");
+                        fail = 1;
+                        break;
+                    }
+                }
+                check_long = check_long >> 1;
+            }
+
+            if (fail == 1) {
+                continue;
+            }
+
+            
+        } else {
+            printf("The Subnet syntax is invalid!\n");
+            continue;
+        }
+
+        // Check if the ip is in the valid range 
+        if (is_ip_combo_valid(input_ip, input_mask) == 0) {
+            printf("Used ip address on subnet network or broadcast address!\n");
+            continue;
+        }
+
+        // Set the interface flag to be running
+        ifr_flag.ifr_flags |= IFF_UP;
+        if (ioctl(fd, SIOCSIFFLAGS, &ifr_flag) < 0) {
+            perror("ioctl(SIOCSIFFLAGS)");
+            close(fd);
+            continue;
+        }
+
+        // Set the interface address correctly
+        if (ioctl(fd, SIOCSIFADDR, &ifr_ip) < 0) {
+            perror("ioctl(SIOCSIFADDR)");
+            close(fd);
+            continue;
+        }
+
+        // Set the interface mask correctly
+        if (ioctl(fd, SIOCSIFNETMASK, &ifr_mask) < 0) {
+            perror("ioctl(SIOCSIFNETMASK)");
+            close(fd);
+            continue;
+        }
+        
+        printf("SUCCESS!\n");
+        break;
+    }
+}
+
+// Gets the input and removes the newline character
+char * get_input(char * buf, int max_size) {
+
+    char * input = fgets(buf, max_size - 1, stdin);
+    if (input == NULL) {
+        return input;
+    }
+
+    int i = 0;
+    while (buf[i] != '\n' && buf[i] != '\0') {
+        i++;
+    }
+
+    buf[i] = '\0';
+    return input;
+}
+
+// Is IP and Subnet combination valid for networking purposes
+int is_ip_combo_valid(unsigned long input_ip, unsigned long input_mask) {
+    unsigned long reserved_network_address = input_ip & input_mask;
+    unsigned long reserved_broadcast_address = input_ip | ~input_mask;
+
+    if (input_ip == reserved_broadcast_address || input_ip == reserved_network_address) {
+        return 0;
+    }
+    return 1;
+}
+
+// Check if the ip is valid
+int is_ip_valid(unsigned long ip, struct interval intervals[], int interval_size) {
+    for (int i = 0; i < interval_size; i++) {
+        struct interval interval = intervals[i];
+        if (ip >= interval.start && ip <= interval.end) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 /* ================= Process Creation ================= */
 static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *name) {
@@ -200,10 +453,16 @@ void cleanup_services(service_t *services) {
     // Wait for services to exit
     int status;
     for (int i = 0; i < NUM_SERVICES; i++) {
-        if (services[i].running) {
-            waitpid(services[i].pid, &status, 0);
-            printf("Service %d exited\n", i);
+        if (is_service_running(services + i) == true) {
+            fprintf(stderr, "Waiting for the service %s to exit... (5 sec)\n", services[i].name);
+            sleep(5);
+            if (is_service_running(services + i)) {
+                fprintf(stderr, "Killed %s Service, PID %d\n", services[i].name, services[i].pid);
+                kill(services[i].pid, 9);
+            }
         }
+        fprintf(stderr, "Service %d exited\n", i);
+
     }
 }
 
@@ -254,6 +513,7 @@ void print_help(service_t *services)
     fprintf(stderr, "  <service>:<command> - Send command to specific service\n");
     fprintf(stderr, "      <service>:start      - Start the specific service\n");
     fprintf(stderr, "      <service>:shutdown   - Shutdown the specific service\n");
+    fprintf(stderr, "  config_ip <iface> <ip> <netmask> - Configure LAN interface\n");
     fprintf(stderr, "  help                - Show this help\n");
     fprintf(stderr, "  q                   - Shutdown router and all sub services.\n");
     fprintf(stderr, "  services            - Print what services are running.\n");
@@ -278,14 +538,84 @@ void print_running_services(service_t *services)
     }
 }
 
+
+/* ================= Network Configuration ================= */
+// This function configures the ip address of the given interface with a static IP address and netmask.
+void configure_ip_interface(const char *iface_name, const char *ip_addr, const char *netmask) {
+    int fd;
+    struct ifreq ifr;
+    struct sockaddr_in *addr;
+
+    // Create a socket to perform ioctl calls
+    if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // Bring interface up
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) == -1) {
+        perror("SIOCGIFFLAGS");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+    ifr.ifr_flags |= IFF_UP;
+    if (ioctl(fd, SIOCSIFFLAGS, &ifr) == -1) {
+        perror("SIOCSIFFLAGS");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set IP address
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+    addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    addr->sin_family = AF_INET;
+    // Use the provided ip_addr argument
+    if (inet_pton(AF_INET, ip_addr, &addr->sin_addr) <= 0) {
+        fprintf(stderr, "Error: Invalid IP address format '%s'\n", ip_addr);
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ioctl(fd, SIOCSIFADDR, &ifr) == -1) {
+        perror("SIOCSIFADDR");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set netmask
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface_name, IFNAMSIZ-1);
+    addr = (struct sockaddr_in *)&ifr.ifr_netmask; // Use ifr_netmask here
+    addr->sin_family = AF_INET;
+    // Use the provided netmask argument
+    if (inet_pton(AF_INET, netmask, &addr->sin_addr) <= 0) {
+        fprintf(stderr, "Error: Invalid netmask format '%s'\n", netmask);
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (ioctl(fd, SIOCSIFNETMASK, &ifr) == -1) {
+        perror("SIOCSIFNETMASK");
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd);
+    fprintf(stderr, "Successfully configured %s with %s/%s\n", iface_name, ip_addr, netmask);
+}
+
 /* ================= Command Handling ================= */
 void handle_service_response(int service_id, int fd) {
-    char buffer[256];
+    char buffer[256 * 50];
     ssize_t count = read(fd, buffer, sizeof(buffer));
     if (count > 0) {
         
         fprintf(stderr, "\33[2K\r");
-        fprintf(stderr, "[Service %d] %.*s", service_id, (int)count, buffer);
+        fprintf(stderr, "%s", buffer);
         fprintf(stderr, "\nroot@router# ");
     }
     
@@ -338,7 +668,6 @@ void handle_cli_input(service_t *services, char * argv[]) {
                 }
             } else if (services[cmd.service_id].running) {
                 write(services[cmd.service_id].router_to_svc[1], cmd.command, strlen(cmd.command)+1);
-                //fprintf(stderr, "Command sent to %s service. PID: %d\n", SERVICE_NAMES[cmd.service_id], services[cmd.service_id].pid);
             } else {
                 fprintf(stderr, "Error: %s service is not running\n", SERVICE_NAMES[cmd.service_id]);
             }
@@ -363,6 +692,18 @@ void handle_cli_input(service_t *services, char * argv[]) {
             print_running_services(services);
             fprintf(stderr, "root@router# "); 
             return;
+        }
+        else if (strncmp(raw_cmd, "config_ip ", 10) == 0) {
+            char *args = raw_cmd + 10; // point past "config_ip"
+            char *iface = strtok(args, " ");
+            char *ip = strtok(NULL, " ");
+            char *mask = strtok(NULL, " ");
+
+            if (iface && ip && mask) {
+                configure_ip_interface(iface, ip, mask);
+            } else {
+                fprintf(stderr, "Usage: config_ip <interface> <ip_address> <netmask>\n");
+            }
         }
         else {
             fprintf(stderr, "Unknown router command: '%s'\n", raw_cmd);
@@ -392,6 +733,14 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+
+
+    // Configure the LAN interface with a static IP address and netmask
+    // Warning!: This is a placeholder. 
+    // You should replace "enp0s8" with your actual interface name.
+    setup_config();
+
+    //configure_lan_interface("enp0s8", "192.168.10.1", "255.255.255.0");
 
     // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
