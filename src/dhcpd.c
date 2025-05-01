@@ -41,7 +41,7 @@ uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
 const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
-uint32_t IP_ALLOC_START_OFFSET = 1;
+uint32_t IP_ALLOC_START_OFFSET = 2;
 
 typedef struct
 {
@@ -612,9 +612,12 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
             }
             // If it was conflicted but now okay to retry, clear the conflict time *before* assigning
             if (conflict_ok_to_retry) {
-                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + IP_ALLOC_START_OFFSET))}; // Assuming old IP scheme for logging
-                 append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr));
-                 leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
+                //TODO: Change hard coded ip address into a ip address extracted from interface
+                uint32_t base_ip_h_log = ntohl(network_addr);
+                uint32_t potential_ip_h_log = base_ip_h_log + i + IP_ALLOC_START_OFFSET;
+                struct in_addr ip_addr_log = {.s_addr = htonl(potential_ip_h_log)};
+                append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr_log));
+                leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
             }
             // Optimization: If we found a truly expired/inactive slot, prefer it over a previously conflicted one.
             // For simplicity now, we just take the first available slot encountered.
@@ -827,20 +830,28 @@ void mark_ip_conflicted(uint32_t conflicted_ip) {
      time_t now = time(NULL);
      pthread_mutex_lock(&lease_mutex);
      for (int i = 0; i < MAX_LEASES; i++) {
-         // Find the lease slot corresponding to the IP
-         if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + IP_ALLOC_START_OFFSET)) == conflicted_ip) {
-              leases[i].active = 0; // Mark inactive
-              leases[i].conflict_detected_time = now;
-              // Clear other fields to make the slot fully available after delay
-              memset(leases[i].mac, 0, 6);
-              leases[i].lease_start = 0;
-              leases[i].lease_end = 0;
-              struct in_addr ip_addr = {.s_addr = conflicted_ip};
-              append_ln_to_log_file("DHCP: Marked IP %s (lease index %d) as conflicted at time %ld.", inet_ntoa(ip_addr), i, now);
-              break; // Found and marked the slot
-         }
-     }
-     pthread_mutex_unlock(&lease_mutex);
+        // Find the lease slot corresponding to the IP
+        // TODO: Change hard coded code to ip address from the interface
+        // Find the lease slot corresponding to the IP
+        // Calculate the IP that *would* be assigned to this slot index
+        uint32_t base_ip_h = ntohl(network_addr);
+        uint32_t slot_ip_h = base_ip_h + i + IP_ALLOC_START_OFFSET;
+        uint32_t slot_ip_n = htonl(slot_ip_h);
+
+        // Check if the conflicted IP matches the IP for this slot OR if the slot currently holds the conflicted IP
+        if (leases[i].ip == conflicted_ip || slot_ip_n == conflicted_ip) {
+            leases[i].active = 0; // Mark inactive
+            leases[i].conflict_detected_time = now;
+            // Clear other fields to make the slot fully available after delay
+            memset(leases[i].mac, 0, 6);
+            leases[i].lease_start = 0;
+            leases[i].lease_end = 0;
+            struct in_addr ip_addr = {.s_addr = conflicted_ip};
+            append_ln_to_log_file("DHCP: Marked IP %s (lease index %d) as conflicted at time %ld.", inet_ntoa(ip_addr), i, now);
+            break; // Found and marked the slot
+        }
+    }
+    pthread_mutex_unlock(&lease_mutex);
 }
 
 void *handle_dhcp_request(void *arg) {
@@ -952,13 +963,13 @@ void *handle_dhcp_request(void *arg) {
 
         if (use_raw) {
             unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &offer, sizeof(dhcp_packet), tx_fd);
+            send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(broadcast_addr), &offer, sizeof(dhcp_packet), tx_fd);
         } else {
             struct sockaddr_in dest_addr;
             memset(&dest_addr, 0, sizeof(dest_addr));
             dest_addr.sin_family = AF_INET;
             dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
-            dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            dest_addr.sin_addr.s_addr = htonl(broadcast_addr );
             socklen_t dest_len = sizeof(dest_addr);
 
             if (sendto(s, &offer, sizeof(offer), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
@@ -1086,7 +1097,7 @@ void *handle_dhcp_request(void *arg) {
 
             if (use_raw) {
                 unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &response_pkt, sizeof(response_pkt), tx_fd);
+                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(broadcast_addr), &response_pkt, sizeof(response_pkt), tx_fd);
             } else {
                 struct sockaddr_in dest_addr;
                 memset(&dest_addr, 0, sizeof(dest_addr));
@@ -1095,7 +1106,7 @@ void *handle_dhcp_request(void *arg) {
                 socklen_t dest_len = sizeof(dest_addr);
 
                 if (packet.ciaddr == 0) {
-                    dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                    dest_addr.sin_addr.s_addr = htonl(broadcast_addr);
                     append_ln_to_log_file("[Thread %lu] Broadcasting UDP ACK.", tid);
                 } else {
                     dest_addr.sin_addr.s_addr = req_ip;
@@ -1116,13 +1127,13 @@ void *handle_dhcp_request(void *arg) {
 
             unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
             if (use_raw) {
-                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(INADDR_BROADCAST), &response_pkt, sizeof(response_pkt), tx_fd);
+                send_dhcp_raw(s, server_mac, broadcast_mac, server_ip, htonl(broadcast_addr), &response_pkt, sizeof(response_pkt), tx_fd);
             } else {
                 struct sockaddr_in dest_addr;
                 memset(&dest_addr, 0, sizeof(dest_addr));
                 dest_addr.sin_family = AF_INET;
                 dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
-                dest_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                dest_addr.sin_addr.s_addr = htonl(broadcast_addr);
                 socklen_t dest_len = sizeof(dest_addr);
 
                 if (sendto(s, &response_pkt, sizeof(response_pkt), 0, (struct sockaddr *)&dest_addr, dest_len) == -1) {
@@ -1416,16 +1427,22 @@ void send_dhcp_raw(int raw_sock,
     memcpy(addr.sll_addr, dst_mac, 6);
 
     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-    bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(INADDR_BROADCAST));
+    bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(broadcast_addr ));
+    // Use temporary buffers for logging IP addresses 
+    char dst_ip_str[INET_ADDRSTRLEN];
+    char mask_str[INET_ADDRSTRLEN];
+    strncpy(dst_ip_str, inet_ntoa(*(struct in_addr *)&dst_ip), INET_ADDRSTRLEN);
+    strncpy(mask_str, inet_ntoa(*(struct in_addr *)&server_netmask), INET_ADDRSTRLEN);
+
+
     // Add server_netmask to the log message
     append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s, Netmask %s",
              tid,
              is_broadcast ? "broadcast" : "unicast",
              sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
              dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
-             inet_ntoa(*(struct in_addr *)&dst_ip),
-             inet_ntoa(*(struct in_addr *)&server_netmask)); // Log the server's netmask
-
+             dst_ip_str, // Use buffer
+             mask_str); // Use buffer
     ssize_t sent = sendto(raw_sock, buf, sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
           0, (struct sockaddr *)&addr, sizeof(addr));
     
