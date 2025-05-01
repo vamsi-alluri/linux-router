@@ -18,7 +18,6 @@
 #include <stdbool.h>
 #include <netinet/ip_icmp.h>
 #include <sys/types.h> 
-#include "helper.h"
 
 #define BUFLEN 512 // Max length of buffer
 #define DHCP_CLIENT_PORT 68
@@ -26,7 +25,7 @@
 #define MAX_THREADS 20
 #define MAX_LEASES 50 
 #define MAX_FRAME_LEN 1514  // Maximum Ethernet frame size
-#define DHCP_SERVER_INTERFACE "enp0s3" //change to your interface name 
+#define DHCP_SERVER_INTERFACE "enp0s8" //change to your interface name 
 
 // Global variables for DHCP server
 dhcp_lease leases[MAX_LEASES];
@@ -37,8 +36,12 @@ int dhcp_socket = -1;  //dhcp packet socket
 int raw_socket = -1;  // Raw packet socket
 unsigned char server_mac[6]; // Server MAC address
 uint32_t server_ip = 0;      // Server IP address
+uint32_t server_netmask = 0; // Server Netmask
+uint32_t network_addr = 0;   // Network address
+uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
 const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
+uint32_t IP_ALLOC_START_OFFSET = 2;
 
 typedef struct
 {
@@ -63,7 +66,7 @@ void listLeases(int tx_fd);
 int countActiveLeases();
 void die(char *s);
 uint16_t ip_checksum(void *vdata, size_t length);
-int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip);
+int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, uint32_t *netmask);
 bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))); 
 void mark_ip_conflicted(uint32_t conflicted_ip);         
 int parse_dhcp_packet(const uint8_t *frame, size_t len, dhcp_packet *packet, unsigned char *client_mac);
@@ -72,7 +75,7 @@ void send_dhcp_raw(int raw_sock,
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
                   dhcp_packet *payload, size_t payload_len,
-                  int tx_fd __attribute__((unused))); // Mark tx_fd as unused
+                  int tx_fd __attribute__((unused))); 
 void append_ln_to_log_file(const char *msg, ...);
 
 // Logging function implementation
@@ -129,8 +132,21 @@ void append_ln_to_log_file(const char *msg, ...) {
     }
 }
 
+
 // Main DHCP service function that communicates with router
-void dhcp_main(int rx_fd, int tx_fd) {
+void dhcp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir) {
+
+    if (chdir(parent_dir) < 0) {
+        append_ln_to_log_file("Error changing directory to  %s\n", parent_dir);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        append_ln_to_log_file("Changed working directory to %s\n", cwd);
+    }
+
+    pid_t pid = getpid();
+    write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
+
     char buffer[256];
     ssize_t count;
 
@@ -143,16 +159,43 @@ void dhcp_main(int rx_fd, int tx_fd) {
     init_leases();
     append_ln_to_log_file("DHCP: Leases initialized.");
 
-    if (get_interface_info(DHCP_SERVER_INTERFACE, server_mac, &server_ip) < 0) {
+    if (get_interface_info(DHCP_SERVER_INTERFACE, server_mac, &server_ip, &server_netmask) < 0) {
         append_ln_to_log_file("Error: Failed to get interface information for %s", DHCP_SERVER_INTERFACE);
         snprintf(buffer, sizeof(buffer),"DHCP: Startup Failed: Interface info error\n");
         write(tx_fd, buffer, strlen(buffer));
         exit(EXIT_FAILURE);
     }
-    append_ln_to_log_file("DHCP: Interface %s MAC: %02x:%02x:%02x:%02x:%02x:%02x IP: %s",
+    // *** ADD TEMPORARY DEBUG LOG ***
+    append_ln_to_log_file("DHCP DEBUG: server_netmask value after get_interface_info: 0x%08x", server_netmask);
+    // *** END TEMPORARY DEBUG LOG ***
+
+    // Calculate network and broadcast addresses based on retrieved info
+    network_addr = server_ip & server_netmask;
+    broadcast_addr = network_addr | (~server_netmask);
+
+    // Use temporary buffers for inet_ntoa results ***
+    char ip_str[INET_ADDRSTRLEN];
+    char mask_str[INET_ADDRSTRLEN];
+    char net_str[INET_ADDRSTRLEN];
+    char bc_str[INET_ADDRSTRLEN];
+
+    // Convert addresses to strings *before* the log call
+    strncpy(ip_str, inet_ntoa(*(struct in_addr *)&server_ip), INET_ADDRSTRLEN);
+    strncpy(mask_str, inet_ntoa(*(struct in_addr *)&server_netmask), INET_ADDRSTRLEN);
+    strncpy(net_str, inet_ntoa(*(struct in_addr *)&network_addr), INET_ADDRSTRLEN);
+    strncpy(bc_str, inet_ntoa(*(struct in_addr *)&broadcast_addr), INET_ADDRSTRLEN);
+
+    // Now log using the temporary string buffers
+    append_ln_to_log_file("DHCP: Interface %s MAC: %02x:%02x:%02x:%02x:%02x:%02x IP: %s Netmask: %s",
                           DHCP_SERVER_INTERFACE, server_mac[0], server_mac[1], server_mac[2],
                           server_mac[3], server_mac[4], server_mac[5],
-                          inet_ntoa(*(struct in_addr *)&server_ip));
+                          ip_str, // Use buffer
+                          mask_str); // Use buffer
+    // Log the calculated network and broadcast addresses
+    append_ln_to_log_file("DHCP: Calculated Network: %s Broadcast: %s",
+                          net_str, // Use buffer
+                          bc_str); // Use buffer
+
 
     if ((raw_socket = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_IP))) == -1) {
         append_ln_to_log_file("Error: Failed to create raw socket - %s", strerror(errno));
@@ -552,13 +595,16 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
     }
 
     // 2. No existing lease for this MAC, find the first available slot
-    // An available slot is one that is inactive, expired, OR was conflicted but the delay has passed.
+    // An available slot is one that is inactive AND not recently conflicted,
+    // OR was conflicted but the retry delay has passed.
     for (i = 0; i < MAX_LEASES; i++)
     {
-        bool is_expired = (!leases[i].active || leases[i].lease_end < now);
+        bool recently_conflicted = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) < CONFLICT_RETRY_DELAY);
         bool conflict_ok_to_retry = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) >= CONFLICT_RETRY_DELAY);
+        bool is_inactive = !leases[i].active;
 
-        if (is_expired || conflict_ok_to_retry)
+        // Check if the slot is available according to the new logic
+        if ((is_inactive && !recently_conflicted) || conflict_ok_to_retry)
         {
             // This slot is potentially usable. Record the first one found.
             if (first_available_slot == -1) {
@@ -566,9 +612,12 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
             }
             // If it was conflicted but now okay to retry, clear the conflict time *before* assigning
             if (conflict_ok_to_retry) {
-                 struct in_addr ip_addr = {.s_addr = htonl(0xC0A80A00 | (i + 100))};
-                 append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (IP %s). Making available again.", i, inet_ntoa(ip_addr));
-                 leases[i].conflict_detected_time = 0;
+                //TODO: Change hard coded ip address into a ip address extracted from interface
+                uint32_t base_ip_h_log = ntohl(network_addr);
+                uint32_t potential_ip_h_log = base_ip_h_log + i + IP_ALLOC_START_OFFSET;
+                struct in_addr ip_addr_log = {.s_addr = htonl(potential_ip_h_log)};
+                append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr_log));
+                leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
             }
             // Optimization: If we found a truly expired/inactive slot, prefer it over a previously conflicted one.
             // For simplicity now, we just take the first available slot encountered.
@@ -583,13 +632,29 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
         memcpy(leases[i].mac, mac, 6);
         leases[i].lease_start = now;
         leases[i].lease_end = now + lease_time;
-        // Assign IP based on the slot index (ensure this matches mark_ip_conflicted logic)
-        leases[i].ip = htonl(0xC0A80A00 | (i + 100));
-        leases[i].conflict_detected_time = 0; // Ensure conflict time is cleared for the new lease
-        allocated_ip = leases[i].ip;
-        struct in_addr ip_addr = {.s_addr = allocated_ip};
-         append_ln_to_log_file("DHCP: Assigning new lease in slot %d for MAC %02x:%02x:%02x:%02x:%02x:%02x with IP %s.",
-                 i, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], inet_ntoa(ip_addr));
+        // Assign IP using the dynamic network_addr and the slot index offset
+        // Convert network_addr to host byte order for calculation, then back to network byte order
+        uint32_t base_ip_h = ntohl(network_addr);
+        uint32_t assigned_ip_h = base_ip_h + i + IP_ALLOC_START_OFFSET; // Add offset (adjust 100 if needed)
+
+        // Basic check: Ensure assigned IP is within the subnet and not the network/broadcast/server IP
+        uint32_t current_broadcast_addr_h = ntohl(broadcast_addr);
+        uint32_t current_server_ip_h = ntohl(server_ip);
+
+        if (assigned_ip_h <= base_ip_h || assigned_ip_h >= current_broadcast_addr_h || assigned_ip_h == current_server_ip_h) {
+             append_ln_to_log_file("DHCP: Calculated IP %u for slot %d is invalid for network %s. Skipping slot.", assigned_ip_h, i, inet_ntoa(*(struct in_addr*)&network_addr));
+             // This case ideally shouldn't be hit often if MAX_LEASES is reasonable
+             // and the loop in step 2 correctly finds an available slot.
+             // Consider adding logic here to try the *next* available slot if this happens.
+             allocated_ip = 0; // Mark as failed for this attempt
+        } else {
+            leases[i].ip = htonl(assigned_ip_h); // Assign the calculated IP in network byte order
+            leases[i].conflict_detected_time = 0; // Ensure conflict time is cleared for the new lease
+            allocated_ip = leases[i].ip;
+            struct in_addr ip_addr = {.s_addr = allocated_ip};
+             append_ln_to_log_file("DHCP: Assigning new lease in slot %d for MAC %02x:%02x:%02x:%02x:%02x:%02x with IP %s.",
+                     i, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], inet_ntoa(ip_addr));
+        }
     } else {
         // No available slots found after checking all MAX_LEASES
         append_ln_to_log_file("DHCP: No available IP addresses in the pool for MAC %02x:%02x:%02x:%02x:%02x:%02x.",
@@ -752,10 +817,6 @@ bool check_ip_conflict(uint32_t ip_to_check, int tx_fd __attribute__((unused))) 
         }
         // If bytes_received == 0, it's unusual, treat as no reply and let timeout handle it.
     } // End while loop
-
-    // If loop finished because break was called (reply_found is true), conflict is true.
-    // If loop finished because timeout expired (select_ret == 0), conflict is false.
-
 cleanup_and_return:
     close(sock_raw_icmp);
     return conflict;
@@ -769,21 +830,28 @@ void mark_ip_conflicted(uint32_t conflicted_ip) {
      time_t now = time(NULL);
      pthread_mutex_lock(&lease_mutex);
      for (int i = 0; i < MAX_LEASES; i++) {
-         // Find the lease slot corresponding to the IP
-         // This relies on the IP allocation scheme being consistent (htonl(0xC0A80A00 | (i + 100)))
-         if (leases[i].ip == conflicted_ip || htonl(0xC0A80A00 | (i + 100)) == conflicted_ip) {
-              leases[i].active = 0; // Mark inactive
-              leases[i].conflict_detected_time = now;
-              // Clear other fields to make the slot fully available after delay
-              memset(leases[i].mac, 0, 6);
-              leases[i].lease_start = 0;
-              leases[i].lease_end = 0;
-              struct in_addr ip_addr = {.s_addr = conflicted_ip};
-              append_ln_to_log_file("DHCP: Marked IP %s (lease index %d) as conflicted at time %ld.", inet_ntoa(ip_addr), i, now);
-              break; // Found and marked the slot
-         }
-     }
-     pthread_mutex_unlock(&lease_mutex);
+        // Find the lease slot corresponding to the IP
+        // TODO: Change hard coded code to ip address from the interface
+        // Find the lease slot corresponding to the IP
+        // Calculate the IP that *would* be assigned to this slot index
+        uint32_t base_ip_h = ntohl(network_addr);
+        uint32_t slot_ip_h = base_ip_h + i + IP_ALLOC_START_OFFSET;
+        uint32_t slot_ip_n = htonl(slot_ip_h);
+
+        // Check if the conflicted IP matches the IP for this slot OR if the slot currently holds the conflicted IP
+        if (leases[i].ip == conflicted_ip || slot_ip_n == conflicted_ip) {
+            leases[i].active = 0; // Mark inactive
+            leases[i].conflict_detected_time = now;
+            // Clear other fields to make the slot fully available after delay
+            memset(leases[i].mac, 0, 6);
+            leases[i].lease_start = 0;
+            leases[i].lease_end = 0;
+            struct in_addr ip_addr = {.s_addr = conflicted_ip};
+            append_ln_to_log_file("DHCP: Marked IP %s (lease index %d) as conflicted at time %ld.", inet_ntoa(ip_addr), i, now);
+            break; // Found and marked the slot
+        }
+    }
+    pthread_mutex_unlock(&lease_mutex);
 }
 
 void *handle_dhcp_request(void *arg) {
@@ -886,8 +954,7 @@ void *handle_dhcp_request(void *arg) {
         uint32_t lease_time = htonl(3600);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-        uint32_t subnet_mask = htonl(0xFFFFFF00);
-        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
         offset = add_dhcp_option(offer.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
         offer.options[offset++] = DHCP_OPTION_END;
@@ -1023,8 +1090,7 @@ void *handle_dhcp_request(void *arg) {
             uint32_t lease_time = htonl(3600);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_LEASE_TIME, 4, (uint8_t *)&lease_time);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-            uint32_t subnet_mask = htonl(0xFFFFFF00);
-            offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+            offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
             offset = add_dhcp_option(response_pkt.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
             response_pkt.options[offset++] = DHCP_OPTION_END;
@@ -1118,8 +1184,7 @@ void *handle_dhcp_request(void *arg) {
         dhcp_packet inform_ack;
         int offset = create_dhcp_packet(&inform_ack, DHCPACK, packet.xid, packet.ciaddr, 0, client_mac);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SERVER_ID, 4, (uint8_t *)&server_ip);
-        uint32_t subnet_mask = htonl(0xFFFFFF00);
-        offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&subnet_mask);
+        offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_SUBNET_MASK, 4, (uint8_t *)&server_netmask);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_ROUTER, 4, (uint8_t *)&server_ip);
         offset = add_dhcp_option(inform_ack.options, offset, DHCP_OPTION_DNS_SERVER, 4, (uint8_t *)&server_ip);
         inform_ack.options[offset++] = DHCP_OPTION_END;
@@ -1159,50 +1224,91 @@ void *handle_dhcp_request(void *arg) {
     pthread_exit(NULL);
 }
 
-uint16_t ip_checksum(void *vdata, size_t length) {
-    uint8_t *data = (uint8_t *)vdata;
+uint16_t ip_checksum(void *vdata, size_t length)
+{
+    uint8_t *data = vdata;
     uint32_t sum = 0;
-    size_t i;
-    for (i = 0; i < length; i += 2) {
-        uint16_t val = 0;
-        if (i + 1 < length) {
-            val = (data[i] << 8) + data[i + 1];
-        } else {
-            val = data[i];
-        }
-        sum += val;
-    }
-    sum = (sum >> 16) + (sum & 0xFFFF);
-    sum += (sum >> 16);
-    return ~sum;
+
+    for (size_t i = 0; i + 1 < length; i += 2)
+        sum += ((uint16_t)data[i] << 8) | data[i + 1];
+
+    if (length & 1)                         // odd byte at the end
+        sum += (uint16_t)data[length - 1] << 8;
+
+    /* fold carries */
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)~sum;
 }
 
-int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip) {
+
+/**
+ * @brief Gets the MAC address, IP address, and netmask of a given network interface.
+ * @param if_name Name of the network interface (e.g., "eth0").
+ * @param mac Pointer to store the MAC address.
+ * @param ip Pointer to store the IP address.
+ * @param netmask Pointer to store the netmask.
+ * @return 0 on success, -1 on error.
+ */
+// * @note This function uses ioctl to retrieve the MAC address, IP address, and netmask of the specified interface.
+int get_interface_info(const char *if_name, unsigned char *mac, uint32_t *ip, uint32_t *netmask) {
     int fd;
     struct ifreq ifr;
-    
+
     fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) return -1;
-    
+    if (fd < 0) {
+        append_ln_to_log_file("DHCP: Error creating socket for interface info: %s", strerror(errno));
+        return -1;
+    }
+
+    // Get MAC Address
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
     if (ioctl(fd, SIOCGIFHWADDR, &ifr) < 0) {
+        append_ln_to_log_file("DHCP: Error getting MAC for %s: %s", if_name, strerror(errno));
         close(fd);
         return -1;
     }
     memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
-    
+
+    // Get IP Address
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
     if (ioctl(fd, SIOCGIFADDR, &ifr) < 0) {
+        append_ln_to_log_file("DHCP: Error getting IP for %s: %s", if_name, strerror(errno));
         close(fd);
         return -1;
     }
     *ip = ((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr.s_addr;
-    
+
+    // Get Netmask
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
+    if (ioctl(fd, SIOCGIFNETMASK, &ifr) < 0) {
+        append_ln_to_log_file("DHCP: Error getting netmask for %s: %s", if_name, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    // *** ADD DEBUG LOGGING HERE ***
+    struct in_addr raw_mask;
+    raw_mask.s_addr = ((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr;
+    append_ln_to_log_file("DHCP DEBUG: Raw netmask from ioctl for %s: %s", if_name, inet_ntoa(raw_mask));
+    // *** END DEBUG LOGGING ***
+
+    *netmask = ((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr;
     close(fd);
     return 0;
 }
+
+/*
+ * @brief Parses a raw DHCP packet from a frame buffer.
+ * @param frame Pointer to the frame buffer containing the DHCP packet.
+ * @param len Length of the frame buffer.
+ * @param packet Pointer to the dhcp_packet structure to fill with parsed data.
+ * @param client_mac Pointer to store the client's MAC address.
+ * @return 1 if successful, 0 if not a valid DHCP packet.
+ */
+// * @note This function checks the Ethernet, IP, and UDP headers, and extracts the DHCP options.
 
 int parse_dhcp_packet(const uint8_t *frame, size_t len,
                       dhcp_packet *packet, unsigned char *client_mac)
@@ -1245,12 +1351,23 @@ int parse_dhcp_packet(const uint8_t *frame, size_t len,
     return 1;
 }
 
+/* @brief Sends a raw DHCP packet over a raw socket.
+ * @param raw_sock The raw socket file descriptor.
+ * @param src_mac Source MAC address.
+ * @param dst_mac Destination MAC address.
+ * @param src_ip Source IP address (in network byte order).
+ * @param dst_ip Destination IP address (in network byte order).
+ * @param payload Pointer to the DHCP packet payload.
+ * @param payload_len Length of the DHCP packet payload.
+ * @param tx_fd The file descriptor for the TX interface (not used in this function).
+ */
+// * @note This function constructs the Ethernet, IP, and UDP headers, calculates checksums, and sends the packet.
 void send_dhcp_raw(int raw_sock, 
                   const unsigned char *src_mac, 
                   const unsigned char *dst_mac,
                   uint32_t src_ip, uint32_t dst_ip,
                   dhcp_packet *payload, size_t payload_len,
-                  int tx_fd __attribute__((unused))) { // Mark tx_fd as unused
+                  int tx_fd __attribute__((unused))) {
     
     uint8_t buf[MAX_FRAME_LEN];
     memset(buf, 0, sizeof(buf));
@@ -1294,7 +1411,7 @@ void send_dhcp_raw(int raw_sock,
         uint16_t udp_len_n = htons(udp_len);
         memcpy(pseudo_buf + 10, &udp_len_n, 2);
         memcpy(pseudo_buf + 12, udp, udp_len);
-        udp->check = htons( ip_checksum(pseudo_buf, pseudo_header_len) );
+        udp->check = htons(ip_checksum(pseudo_buf, pseudo_header_len));
         if (udp->check == 0) udp->check = 0xFFFF;
         free(pseudo_buf);
     } else {
@@ -1311,12 +1428,14 @@ void send_dhcp_raw(int raw_sock,
 
     unsigned char broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     bool is_broadcast = (memcmp(dst_mac, broadcast_mac, 6) == 0 || dst_ip == htonl(INADDR_BROADCAST));
-    append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s",
+    // Add server_netmask to the log message
+    append_ln_to_log_file("[Thread %lu] Sending RAW %s packet (len %zu) to MAC %02x:%02x:%02x:%02x:%02x:%02x, IP %s, Netmask %s",
              tid,
              is_broadcast ? "broadcast" : "unicast",
              sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
              dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5],
-             inet_ntoa(*(struct in_addr *)&dst_ip));
+             inet_ntoa(*(struct in_addr *)&dst_ip),
+             inet_ntoa(*(struct in_addr *)&server_netmask)); // Log the server's netmask
 
     ssize_t sent = sendto(raw_sock, buf, sizeof(*eth) + sizeof(*ip) + sizeof(*udp) + payload_len,
           0, (struct sockaddr *)&addr, sizeof(addr));
