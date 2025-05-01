@@ -32,13 +32,15 @@ char *progname;
 const char *SERVICE_NAMES[NUM_SERVICES] = {"dhcp", "nat", "dns", "ntp"};
 volatile sig_atomic_t shutdown_requested_flag = 0;
 
+char cwd[256];
+
 typedef struct {
     pid_t pid;
     int router_to_svc[2];
     int svc_to_router[2];
     bool running;
     char name[5];
-    void (* main_func)(int, int, int);
+    void (* main_func)(int, int, int, char *);
 } service_t;
 
 typedef struct {
@@ -358,7 +360,7 @@ static void daemonize_process(int rx_fd, int tx_fd, char *argv[], const char *na
 }
 
 void start_service(service_t *svc, char *argv[]) {
-    void (*entry)(int, int, int) = svc->main_func;
+    void (*entry)(int, int, int, char *) = svc->main_func;
     // Create communication pipes
     if (pipe(svc->router_to_svc) == -1 || pipe(svc->svc_to_router) == -1) {
         perror("pipe");
@@ -384,7 +386,8 @@ void start_service(service_t *svc, char *argv[]) {
         // Notify router we're ready
         // write(svc->svc_to_router[1], SERVICE_READY_MSG, sizeof(SERVICE_READY_MSG));
         
-        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose);
+        // Start service must be run after cwd is initialized!
+        entry(svc->router_to_svc[0], svc->svc_to_router[1], verbose, cwd);
         
         
         close(svc->router_to_svc[0]); // Close pipes before exit
@@ -449,10 +452,12 @@ void cleanup_services(service_t *services) {
     
     // Wait for services to exit
     int status;
+    fprintf(stderr, "Waiting for services to close...\n");
+    sleep(2);
+
     for (int i = 0; i < NUM_SERVICES; i++) {
         if (is_service_running(services + i) == true) {
             fprintf(stderr, "Waiting for the service %s to exit... (5 sec)\n", services[i].name);
-            sleep(5);
             if (is_service_running(services + i)) {
                 fprintf(stderr, "Killed %s Service, PID %d\n", services[i].name, services[i].pid);
                 kill(services[i].pid, 9);
@@ -741,8 +746,14 @@ int main(int argc, char *argv[]) {
 
     // Create the services list struct
     service_t services[NUM_SERVICES] = {0};
-    void (*entries[4])(int, int, int) = {dhcp_main, nat_main, dns_main, ntp_main};
+    void (*entries[4])(int, int, int, char *) = {dhcp_main, nat_main, dns_main, ntp_main};
     register_signal_handlers();
+
+    if (getcwd(cwd, 256) == NULL) {
+        print_verboseln("Could not get current working directory or size too small\n");
+        return (EXIT_FAILURE);           // If it reaches this point it should be a failure    
+    }
+    fprintf(stderr, "Current Working Directory: %s\n", cwd);
 
     // Start all services
     for (int i = 0; i < NUM_SERVICES; i++) {

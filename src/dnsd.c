@@ -87,6 +87,7 @@ void append_ln_to_log_file_dns_verbose(const char *msg, ...) {
     va_end(args);
 }
 
+
 int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], size_t size) {
 
     int temp_sock;  // Temporary socket for IP lookup
@@ -111,7 +112,7 @@ int get_machine_ip_dns(const char *iface, unsigned char gateway_ip[IP_LENGTH], s
     close(temp_sock);
 }
 
-void dns_main(int rx_fd, int tx_fd, int verbose_p){
+void dns_main(int rx_fd, int tx_fd, int verbose_p, char * parent_dir){
 
     read_from_router_pipe = rx_fd;
     write_to_router_pipe = tx_fd;
@@ -120,6 +121,14 @@ void dns_main(int rx_fd, int tx_fd, int verbose_p){
     // Send the PID back to the parent for processing
     pid_t pid = getpid();
     write(write_to_router_pipe, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
+
+    if (chdir(parent_dir) < 0) {
+        write(tx_fd, "Error changing directory.\n", 26);
+    } else {
+        char cwd[256];
+        getcwd(cwd, 256);
+        write(tx_fd, "Changed working directory.\n", 27);
+    }
     
     append_ln_to_log_file_dns_verbose("DNS service started.");
     memset(domain_table, 0, MAX_ENTRIES * sizeof(dns_bucket *));   // Clear domain_table
