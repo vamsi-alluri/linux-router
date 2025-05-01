@@ -160,7 +160,7 @@ void dhcp_main(int rx_fd, int tx_fd, int verbose, char * dhcp_log_file_path_arg)
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process. 
 
-    if ((chdir(dhcp_log_file_path_arg) > 0) && set_dhcp_log_file_path(dhcp_log_file_path_arg)) {
+    if (set_dhcp_log_file_path(dhcp_log_file_path_arg)) {
         append_ln_to_log_file("Updated log file path.");
     }
     else

@@ -118,7 +118,7 @@ void ntp_main(int rx_fd, int tx_fd, int verbose_p, char * ntp_log_file_path_arg)
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process.
 
-    if ((chdir(ntp_log_file_path_arg) > 0) && set_ntp_log_file_path(ntp_log_file_path_arg)) {
+    if (set_ntp_log_file_path(ntp_log_file_path_arg)) {
         append_ln_to_log_file("Updated log file path.");
     }
     else
