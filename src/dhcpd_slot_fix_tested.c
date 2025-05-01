@@ -41,7 +41,7 @@ uint32_t network_addr = 0;   // Network address
 uint32_t broadcast_addr = 0; // Broadcast address
 volatile int server_running = 1;
 const char *log_file_path = "/tmp/dhcpd.log"; // Log file path
-uint32_t IP_ALLOC_START_OFFSET = 2;
+uint32_t IP_ALLOC_START_OFFSET = 1000;
 
 typedef struct
 {
@@ -563,7 +563,9 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
     int i;
     time_t now = time(NULL);
     uint32_t allocated_ip = 0;
-    const time_t CONFLICT_RETRY_DELAY = 60; 
+    int first_available_slot = -1;
+    const time_t CONFLICT_RETRY_DELAY = 60; // Don't reuse a conflicted slot for 60 seconds
+
     pthread_mutex_lock(&lease_mutex);
 
     // 1. Check for an existing, active, non-conflicted lease for this MAC
@@ -593,61 +595,64 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
     }
 
     // 2. No existing lease for this MAC, find the first available slot
-    int slot = -1;
-    for (i = 0; i < MAX_LEASES; i++) {
-        bool recently_conflicted   = (leases[i].conflict_detected_time > 0
-                                      && (now - leases[i].conflict_detected_time) <  CONFLICT_RETRY_DELAY);
-        bool conflict_ok_to_retry  = (leases[i].conflict_detected_time > 0
-                                      && (now - leases[i].conflict_detected_time) >= CONFLICT_RETRY_DELAY);
-        bool is_inactive           = !leases[i].active;
+    // An available slot is one that is inactive AND not recently conflicted,
+    // OR was conflicted but the retry delay has passed.
+    for (i = 0; i < MAX_LEASES; i++)
+    {
+        bool recently_conflicted = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) < CONFLICT_RETRY_DELAY);
+        bool conflict_ok_to_retry = (leases[i].conflict_detected_time > 0 && (now - leases[i].conflict_detected_time) >= CONFLICT_RETRY_DELAY);
+        bool is_inactive = !leases[i].active;
 
-        if ((is_inactive && !recently_conflicted) || conflict_ok_to_retry) {
-            if (conflict_ok_to_retry) {
-                // log that we’re re-using a formerly conflicted slot
-                uint32_t base_ip_h_log         = ntohl(network_addr);
-                uint32_t potential_ip_h_log    = base_ip_h_log + i + IP_ALLOC_START_OFFSET;
-                struct in_addr ip_addr_log     = { .s_addr = htonl(potential_ip_h_log) };
-                append_ln_to_log_file(
-                  "DHCP: Conflict delay passed for slot %d (potential IP %s). Re-enabling slot.",
-                  i, inet_ntoa(ip_addr_log));
-                leases[i].conflict_detected_time = 0;
+        // Check if the slot is available according to the new logic
+        if ((is_inactive && !recently_conflicted) || conflict_ok_to_retry)
+        {
+            // This slot is potentially usable. Record the first one found.
+            if (first_available_slot == -1) {
+                first_available_slot = i;
             }
-            slot = i;
-            break;
+            // If it was conflicted but now okay to retry, clear the conflict time *before* assigning
+            if (conflict_ok_to_retry) {
+                //TODO: Change hard coded ip address into a ip address extracted from interface
+                uint32_t base_ip_h_log = ntohl(network_addr);
+                uint32_t potential_ip_h_log = base_ip_h_log + i + IP_ALLOC_START_OFFSET;
+                struct in_addr ip_addr_log = {.s_addr = htonl(potential_ip_h_log)};
+                append_ln_to_log_file("DHCP: Conflict delay passed for slot %d (potential IP %s). Making available again.", i, inet_ntoa(ip_addr_log));
+                leases[i].conflict_detected_time = 0; // Clear conflict time as it's now usable
+            }
+            break; // Take the first suitable slot found in the loop
         }
     }
 
-    // 3. If we found a slot, now compute & validate its IP ***before*** touching leases[].active
-    if (slot >= 0) {
-        uint32_t base_ip_h      = ntohl(network_addr);
-        uint32_t assigned_ip_h  = base_ip_h + slot + IP_ALLOC_START_OFFSET;
-        uint32_t bcast_h        = ntohl(broadcast_addr);
-        uint32_t server_ip_h    = ntohl(server_ip);
+    // 3. If an available slot was found, assign the lease details
+    if (first_available_slot != -1) {
+        i = first_available_slot; // Use the index of the found slot
+        leases[i].active = 1;
+        memcpy(leases[i].mac, mac, 6);
+        leases[i].lease_start = now;
+        leases[i].lease_end = now + lease_time;
+        // Assign IP using the dynamic network_addr and the slot index offset
+        // Convert network_addr to host byte order for calculation, then back to network byte order
+        uint32_t base_ip_h = ntohl(network_addr);
+        uint32_t assigned_ip_h = base_ip_h + i + IP_ALLOC_START_OFFSET; // Add offset (adjust 100 if needed)
 
-        if (assigned_ip_h <= base_ip_h
-            || assigned_ip_h >= bcast_h
-            || assigned_ip_h == server_ip_h) {
-            // invalid — log and give up
-            struct in_addr bad = { .s_addr = htonl(assigned_ip_h) };
-            append_ln_to_log_file(
-              "DHCP: Calculated IP %s for slot %d is outside [%s–%s]. Skipping.",
-              inet_ntoa(bad), slot,
-              inet_ntoa((struct in_addr){ htonl(base_ip_h) }),
-              inet_ntoa((struct in_addr){ htonl(bcast_h) }));
-            allocated_ip = 0;
+        // Basic check: Ensure assigned IP is within the subnet and not the network/broadcast/server IP
+        uint32_t current_broadcast_addr_h = ntohl(broadcast_addr);
+        uint32_t current_server_ip_h = ntohl(server_ip);
+
+        if (assigned_ip_h <= base_ip_h || assigned_ip_h >= current_broadcast_addr_h || assigned_ip_h == current_server_ip_h) {
+             append_ln_to_log_file("DHCP: Calculated IP %u for slot %d is invalid for network %s. Skipping slot.", assigned_ip_h, i, inet_ntoa(*(struct in_addr*)&network_addr));
+             leases[i].active = 0; // Mark inactive again
+             memset(leases[i].mac, 0, 6); // Optional: Clear MAC too
+             leases[i].lease_start = 0; // Optional: Clear times
+             leases[i].lease_end = 0;
+             allocated_ip = 0; // Mark as failed for this attempt
         } else {
-            // valid — only now mark active and record the lease
-            leases[slot].active         = 1;
-            memcpy(leases[slot].mac, mac, 6);
-            leases[slot].lease_start    = now;
-            leases[slot].lease_end      = now + lease_time;
-            leases[slot].ip             = htonl(assigned_ip_h);
-            allocated_ip                = leases[slot].ip;
-            append_ln_to_log_file(
-              "DHCP: Assigned IP %s to MAC %02x:%02x:%02x:%02x:%02x:%02x in slot %d.",
-              inet_ntoa((struct in_addr){ htonl(assigned_ip_h) }),
-              mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],
-              slot);
+            leases[i].ip = htonl(assigned_ip_h); // Assign the calculated IP in network byte order
+            leases[i].conflict_detected_time = 0; // Ensure conflict time is cleared for the new lease
+            allocated_ip = leases[i].ip;
+            struct in_addr ip_addr = {.s_addr = allocated_ip};
+             append_ln_to_log_file("DHCP: Assigning new lease in slot %d for MAC %02x:%02x:%02x:%02x:%02x:%02x with IP %s.",
+                     i, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], inet_ntoa(ip_addr));
         }
     } else {
         // No available slots found after checking all MAX_LEASES
