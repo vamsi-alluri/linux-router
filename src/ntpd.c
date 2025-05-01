@@ -98,8 +98,8 @@ void ntp_main(int rx_fd, int tx_fd, int verbose_p)
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process.
 
     memset(&server_hostname, 0, sizeof(server_hostname));
-    strncpy(server_hostname, DEFAULT_SERVER, strlen(DEFAULT_SERVER) - 1);
-    server_hostname[strlen(DEFAULT_SERVER) - 1] = '\0'; // Null-terminate
+    strncpy(server_hostname, DEFAULT_SERVER, strlen(DEFAULT_SERVER));
+    server_hostname[strlen(DEFAULT_SERVER)] = '\0'; // Null-terminate
 
     last_refresh = refresh_time();
     refresh_interval = DEFAULT_REFRESH;
@@ -370,8 +370,8 @@ void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
     }
     else if (strncmp(command, "server ", 7) == 0)
     {
-        strncpy(server_hostname, command + 7, strlen(command + 7) - 1);
-        server_hostname[strlen(command + 7) - 1] = '\0'; // Null-terminate
+        strncpy(server_hostname, command + 7, strlen(command + 7));
+        server_hostname[strlen(command + 7)] = '\0'; // Null-terminate
         write(tx_fd, "NTP: Saved NTP Server\n", 22);
     }
     else if (strncmp(command, "refresh", 8) == 0)
@@ -382,8 +382,8 @@ void handle_ntp_command(int rx_fd, int tx_fd, unsigned char *command)
     else if (strncmp(command, "interval ", 9) == 0)
     {
         char temp[50];
-        strncpy(temp, command + 9, strlen(command + 9) - 1);
-        temp[strlen(command + 9) - 1] = '\0'; // Null-terminate
+        strncpy(temp, command + 9, strlen(command + 9));
+        temp[strlen(command + 9)] = '\0'; // Null-terminate
         refresh_interval = atoi(temp);
         write(tx_fd, "NTP: Changed Refresh Interval\n", 30);
     }
