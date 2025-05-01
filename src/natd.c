@@ -32,6 +32,7 @@
 #define DEFAULT_WAN_IFACE "enp0s3"      // Configurable by command.
 #define MAX_LOG_SIZE 5 * 1024 * 1024    // 5MB default
 #define DEFAULT_NAT_LOG_PATH "/tmp/linux-router/logs/"
+#define DEV_DEFAULT_NAT_LOG_PATH_FULL "/home/osboxes/cs536/router/logs/nat.log"
 #define DEFAULT_NAT_LOG_FILE_NAME "nat.log"
 #define DEFAULT_NAT_LOG_PATH_FULL "/tmp/linux-router/logs/nat.log"
 
@@ -45,7 +46,7 @@
 #define TCP_TIMEOUT_DEFAULT 24 * 60 * 60// 24 hrs.
 #define UDP_TIMEOUT_DEFAULT 30          // 30 sec.
 #define ICMP_TIMEOUT_DEFAULT 10         // 10 sec.
-#define CLEANUP_INTERVAL_DEFAULT 5 * 60 // 5 mins.
+#define CLEANUP_INTERVAL_DEFAULT 5      // 5 sec.
 #define ARPOP_REQUEST 1                 // ARP request
 #define ARPOP_REPLY   2                 // ARP reply
 #define ARP_CACHE_TIMEOUT 300           // 5 minutes
@@ -84,7 +85,7 @@ const reserved_ports_for_inbound port_list[] = {
 
 // Global variables:
 static int lan_raw, wan_raw, rx_fd, tx_fd;
-static char *nat_log_file_path;
+static char *nat_log_file_path = DEV_DEFAULT_NAT_LOG_PATH_FULL;
 static uint8_t wan_machine_mac[6], lan_machine_mac[6];
 static uint32_t wan_machine_ip, lan_machine_ip, wan_gateway_ip;
 static char wan_machine_ip_str[INET_ADDRSTRLEN];
@@ -112,8 +113,9 @@ struct nat_entry{
     uint16_t trans_port_host;   // Translated port/ICMP ID - in host byte order.
     uint8_t protocol;           // TCP (6), UDP (17), ICMP (1)
     time_t last_used;           // Used for timeout calculations.
-    uint16_t custom_timeout;    // Timeout in seconds - For overriding the default timeout - TCP FIN: 60 sec timeout.
+    uint16_t timeout;    // Timeout in seconds - For overriding the default timeout - TCP FIN: 60 sec timeout.
     tcp_state state;            // To track TCP connections.
+    bool freed;
 };
 
 struct nat_bucket {
@@ -175,7 +177,7 @@ struct nat_entry* add_port_forward(uint16_t wan_port, uint32_t dest_ip,
         .trans_port_host = wan_port,     // External WAN port
         .protocol = protocol,
         .last_used = time(NULL),
-        .custom_timeout = 0,             // Use standard timeouts
+        .timeout = 0,             // Use standard timeouts
         .state = NAT_TCP_ESTABLISHED     // For TCP, assume established
     };
     
@@ -243,6 +245,7 @@ void cleanup_all_nat_entries(void) {
                 free(bucket->entry);
             }
             
+            bucket->entry->freed = true; // Mark entry as freed - sometimes freed objects are being read again.
             free(bucket);
             bucket = next;
         }
@@ -292,6 +295,11 @@ void print_nat_table() {
             struct nat_entry *entry = bucket->entry;
             char orig_ip_str[INET_ADDRSTRLEN], trans_ip_str[INET_ADDRSTRLEN];
             char orig_port_str[8], trans_port_str[8], proto_str[8], timeout_str[8];
+
+            if (entry->freed){
+                bucket = bucket->next;
+                continue;
+            }
             
             // Convert IP addresses to strings
             inet_ntop(AF_INET, &entry->orig_ip, orig_ip_str, INET_ADDRSTRLEN);
@@ -300,7 +308,7 @@ void print_nat_table() {
             // Convert ports to strings
             int_to_str(entry->orig_port_host, orig_port_str, sizeof(orig_port_str));
             int_to_str(entry->trans_port_host, trans_port_str, sizeof(trans_port_str));
-            int_to_str(entry->custom_timeout, timeout_str, sizeof(timeout_str));
+            int_to_str(entry->timeout, timeout_str, sizeof(timeout_str));
 
             
             // Get protocol string
@@ -455,7 +463,8 @@ struct nat_entry* enrich_entry(struct nat_entry *details, packet_direction_t dir
             .trans_port_host = allocate_port(details->protocol),
             .protocol = details->protocol,
             .last_used = time(NULL),
-            .custom_timeout = 0,
+            .timeout = NULL,
+            .freed = false,
             .state = (details->protocol == 6) ? NAT_TCP_SYN_SENT : NAT_TCP_NEW
         };
         
@@ -614,8 +623,8 @@ void cleanup_expired_nat_entries() {
             int timeout = 0;
             
             // Priority 1: Custom timeout (RST/FIN cases)
-            if (entry->custom_timeout > 0) {
-                timeout = entry->custom_timeout;
+            if (entry->timeout > 0) {
+                timeout = entry->timeout;
             }
             // TCP state handling
             else if (entry->protocol == TCP_IP_TYPE) {  
@@ -629,10 +638,12 @@ void cleanup_expired_nat_entries() {
                     case NAT_TCP_SYN_SENT:
                     case NAT_TCP_SYN_RECEIVED:
                     case NAT_TCP_CLOSING:
-                    case NAT_TCP_LAST_ACK:
                         timeout = tcp_transitory_timeout;
                         break;
                         
+                    case NAT_TCP_LAST_ACK:
+                        timeout = -1;  // Immediate cleanup for last ACK
+                        break;
                     case NAT_TCP_TIME_WAIT:
                         timeout = tcp_time_wait_timeout;
                         break;
@@ -939,9 +950,9 @@ void get_machine_ip(const char *iface, char *gateway_ip, size_t size) {
 
 bool set_nat_log_file_path(char *path){
     
-    if (DEFAULT_NAT_LOG_PATH_FULL){
-        nat_log_file_path = DEFAULT_NAT_LOG_PATH_FULL;
-        return;
+    if (DEV_DEFAULT_NAT_LOG_PATH_FULL){
+        nat_log_file_path = DEV_DEFAULT_NAT_LOG_PATH_FULL;
+        return true;
     }
 
     write(tx_fd, path, strlen(path));
@@ -1411,6 +1422,7 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             if (flags & (1 << 4)) {
                 if (translated_nat_entry->state == NAT_TCP_SYN_RECEIVED) {
                     translated_nat_entry->state = NAT_TCP_ESTABLISHED;
+                    translated_nat_entry->timeout = 86400;   // A day.
                 }
                 translated_nat_entry->last_used = time(NULL);
             }
@@ -1418,13 +1430,14 @@ void handle_outbound_packet(unsigned char *buffer, ssize_t len) {
             // RST Handling
             if (flags & (1 << 6)) {
                 translated_nat_entry->state = NAT_TCP_CLOSING;
-                translated_nat_entry->custom_timeout = 10;  // Fast cleanup for reset connections
+                translated_nat_entry->timeout = 10;  // Fast cleanup for reset connections
             }
 
             // SYN Handling
             if (flags & (1 << 7)) {
                 if (translated_nat_entry->state == NAT_TCP_ESTABLISHED) {
                     translated_nat_entry->state = NAT_TCP_CLOSING;
+                    translated_nat_entry->timeout = 60;   // 1 min - if there's no ACK, clean it.
                 }
             }
 
@@ -1761,7 +1774,7 @@ void handle_inbound_packet(unsigned char *buffer, ssize_t len) {
             // RST Handling
             if (flags & (1 << 6)) {
                 enriched_entry->state = NAT_TCP_CLOSING;
-                enriched_entry->custom_timeout = 10;  // Fast cleanup for reset connections
+                enriched_entry->timeout = 10;  // Fast cleanup for reset connections
             }
 
             // SYN Handling
