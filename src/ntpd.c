@@ -17,8 +17,8 @@
 #define DEFAULT_REFRESH 14400             // 4 hours in seconds
 #define DEFAULT_SERVER "time.google.com"  // TODO: set default server hostname here
 #define MAX_LOG_SIZE 5 * 1024 * 1024      // 5MB default
-#define DEFAULT_NTP_LOG_PATH "/root/linux-router/bin/logs/"
-#define DEFAULT_NTP_LOG_PATH_FULL "/root/linux-router/bin/logs/ntp.log"
+#define DEFAULT_NTP_LOG_PATH "/tmp/linux-router/logs/"
+#define DEFAULT_NTP_LOG_PATH_FULL "/tmp/linux-router/logs/ntp.log"
 #define DEFAULT_NTP_LOG_FILE_NAME "ntp.log"
 #define DEFAULT_WAN_IFACE "enp0s3"
 #define DEFAULT_LAN_IFACE "enp0s8"
