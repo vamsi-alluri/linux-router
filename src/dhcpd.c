@@ -619,6 +619,8 @@ uint32_t allocate_ip(const uint8_t *mac, time_t lease_time)
              // and the loop in step 2 correctly finds an available slot.
              // Consider adding logic here to try the *next* available slot if this happens.
              allocated_ip = 0; // Mark as failed for this attempt
+             // Set the ith lease to be 0 in order to make inactive
+             memset(leases + i, 0, sizeof(dhcp_lease));
         } else {
             leases[i].ip = htonl(assigned_ip_h); // Assign the calculated IP in network byte order
             leases[i].conflict_detected_time = 0; // Ensure conflict time is cleared for the new lease
