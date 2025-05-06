@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-void dhcp_main(int rx_fd, int tx_fd, int verbose, char * parent_dir);
+void dhcp_main(int rx_fd, int tx_fd);
 
 /* DHCP Magic Cookie */
 #define DHCP_MAGIC_COOKIE 0x63825363

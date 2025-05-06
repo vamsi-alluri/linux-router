@@ -90,17 +90,9 @@ void append_ln_to_log_file_ntp_verbose(const char *msg, ...) {
 
 unsigned char server_hostname[255];
 
-void ntp_main(int rx_fd, int tx_fd, int verbose_p, char * parent_dir)
+void ntp_main(int rx_fd, int tx_fd, int verbose_p)
 {
-
-    if (chdir(parent_dir) < 0) {
-        fprintf(tx_fd, "Error changing directory to %s\n", parent_dir);
-    } else {
-        char cwd[256];
-        getcwd(cwd, 256);
-        fprintf(tx_fd, "Changed directory to %s\n", cwd);
-    }
-
+    verbose_g = verbose_p;
     // Send the PID back to the parent for processing
     pid_t pid = getpid();
     write(tx_fd, &pid, sizeof(pid_t)); // Send the pid to be stored by the parent process.
