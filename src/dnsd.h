@@ -36,6 +36,27 @@ typedef struct
     unsigned long ttl;                      /* Time that the entry will expire (default is 4 hours after no use) */
 } dns_entry;
 
+// typedef struct
+// {
+//     unsigned char domain[MAX_DN_LENGTH];    /* Domain name (i.e. www.google.com) */
+//     unsigned short type;
+//     union {
+//         struct {
+//             unsigned char ip[MAX_IPS][IP_LENGTH];   /* Array of IP addresses (i.e. 8.8.8.8) */
+//             unsigned short numIp;                   /* Number of IP addresses in ip array */
+//         } a;                                        /* Will be used if is an A record */
+//         unsigned char cname[MAX_DN_LENGTH];         /* Will be used if is an alias to another entry */
+//     } data;
+//     unsigned long ttl;                      /* Time that the entry will expire (default is 4 hours after no use) */
+// } dns_entry;
+
+
+// typedef struct
+// {
+//     unsigned char domain[MAX_DN_LENGTH];    /* Queried Domain name (i.e. www.google.com) */
+//     unsigned char target[MAX_DN_LENGTH];    /* Targeted Domain name (i.e. www.google.com) */
+// } cname_entry;
+
 typedef struct
 {
     dns_entry entry;                    /* Actual DNS Entry */
